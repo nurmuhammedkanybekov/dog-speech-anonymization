@@ -1,0 +1,6 @@
+-r requirements-separation.txt
+# Steps 6-9: oracle test on real data, Whisper privacy check, trained detector
+sherpa-onnx==1.13.8
+torchvggish==0.2
+scikit-learn==1.9.1
+matplotlib>=3.8

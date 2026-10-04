@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+outputs/
+venv/
+.DS_Store
+models/
+
+# never commit audio, transcripts or model weights
+*.wav
+*.flac
+*.mp3
+*.npz
+*.onnx
+*.pth

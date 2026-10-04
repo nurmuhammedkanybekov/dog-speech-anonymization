@@ -1,0 +1,4 @@
+-r requirements.txt
+# speech-removal methods (Step 4)
+pystoi>=0.4
+deepfilternet==0.5.6

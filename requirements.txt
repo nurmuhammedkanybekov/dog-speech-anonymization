@@ -1,0 +1,5 @@
+torch==2.9.1
+torchaudio==2.9.1
+silero-vad==6.2.2
+soundfile==0.14.0
+onnxruntime==1.30.0
