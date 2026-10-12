@@ -308,6 +308,102 @@ are quiet panting. Routing inside the annotated human time:
 So the oracle hybrid is an upper bound; a deployable hybrid needs a better dog
 detector or a privacy-first rule ("when unsure, mute").
 
+**Step 12: the full pipeline on real recordings, with no expert labels**
+
+```bash
+python -m scripts.run_pipeline_real --worker 0 --n-workers 2   # and --worker 1 in parallel (~2 h on 2 CPUs)
+python -m scripts.run_pipeline_real --summarize-only
+python -m scripts.plot_pipeline_real   # -> outputs/pipeline_real/privacy_vs_dog_loss.png
+```
+
+Until now the real-data privacy numbers assumed perfect detection (the
+"oracle"). Here the trained human detector (Step 9) and the trained dog
+detector (Step 11) do everything, using their leave-one-participant-out
+predictions, so each session is processed by models that never saw that
+participant. The expert annotations are used only for scoring:
+
+- privacy: Whisper, as in Step 8, on all 581 human events;
+- dog: the share of dog-vocalization time without a human that gets muted
+  (lost) or subtracted (slightly altered).
+
+| configuration | events with 2+ readable words | long events (> 1 s) | dog time muted | dog time subtracted |
+|---|---|---|---|---|
+| no processing | 22.9% | 36.3% | 0% | 0% |
+| Silero VAD + mute (original approach) | 21.5% | 32.1% | 0% | 0% |
+| automatic hybrid, strict | 10.3% | 12.1% | 3.6% | 5.4% |
+| automatic hybrid, balanced | 11.0% | 14.2% | 11.3% | 21.3% |
+| automatic hybrid, balanced, privacy-first dog threshold | 8.1% | 8.9% | 19.3% | 13.4% |
+| automatic hybrid, high recall | 9.3% | 13.2% | 24.2% | 50.8% |
+| **trained detector + mute, strict** | **7.6%** | **7.4%** | **9.0%** | 0% |
+| **trained detector + mute, balanced** | **3.3%** | **2.6%** | 32.7% | 0% |
+| oracle hybrid (expert labels, Step 8) | 7.2% | 11.1% | n/a | n/a |
+| background only (Whisper hallucination level) | 4.1% | 1.6% | | |
+
+Findings:
+
+1. The original approach gives no privacy on real recordings (21.5% vs. 22.9%).
+2. With the trained detector, simply muting what it finds works well:
+   - at the strict setting it matches the oracle hybrid (7.6%) while losing
+     9% of dog time;
+   - at the balanced setting it reaches Whisper's own hallucination level
+     (3.3% vs. 4.1%), but a third of the dog time is lost.
+3. The automatic hybrid does *worse* than plain muting at the same dog cost.
+   The dog detector sends much of the human speech to subtraction, and
+   subtraction barely works on these recordings (Step 6). The hybrid only pays
+   off once removal in the overlap works on real far-field speech.
+
+So the practical recommendation for now is trained detector + mute, with
+the strict/balanced setting chosen by how much dog sound may be lost. The
+research problem that remains is removing speech where it overlaps a dog.
+
+Caveats:
+
+- The thresholds were picked on the pooled out-of-fold scores (slightly
+  optimistic).
+- Whisper is a proxy for a human listener.
+- Both detectors still need the lab's annotations for training (from other
+  participants).
+
+**Step 13: the raw recordings have three synchronized microphones**
+
+```bash
+python -m scripts.download_raw_audio --list   # 48 audio files, 2.04 GB, out of the 43 GB raw zip
+python -m scripts.download_raw_audio          # downloads only the audio, using HTTP range requests
+bash scripts/prepare_raw_audio.sh             # -> ../data/elte_barks/raw16k/P-xx/*.flac (16 kHz mono)
+```
+
+The Zenodo "02 Raw recordings.zip" is 43 GB, almost all video. The audio
+inside is small. Per participant it has:
+
+- M1: Rode Wireless Go 2 clip-on, all 17 participants;
+- M2: Sennheiser ME66 shotgun, 15 participants (not P-05/P-06);
+- M3: Sennheiser ME64 cardioid, 16 participants (not P-01).
+
+All three were recorded on one Zoom H4 Essential. Checked on P-02:
+
+- The three files have identical length, which fits one recorder and one
+  clock, i.e. synchronized.
+- The session files we use are exact excerpts of M2: envelope correlation
+  0.999, at 141.0 s and 317.0 s.
+- M1 and M3 are stereo files with the same signal in both channels.
+- The clip-on is not worn by the person. Human sounds are not louder on M1
+  than on the other microphones, so it gives no clean speech reference.
+- The level ratio between microphones differs between human and dog sounds
+  (the dog is closer to M3). On its own, this level difference separates
+  human from dog events with AUC 0.67–0.69 on P-02, a cue that is
+  independent of the sound itself.
+
+Per the dataset preprint (bioRxiv 10.64898/2026.04.20.719471), the room is
+the 5.46 m x 4.41 m BARKS audio lab, with 7 synchronized cameras. Exact
+microphone positions are not given.
+
+Next uses:
+
+- inter-microphone level and time-difference features for the human/dog
+  detectors;
+- spatial filtering;
+- TDoA localization (Ivannova's task).
+
 ## Testing
 
 ```bash
