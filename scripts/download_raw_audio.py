@@ -13,7 +13,7 @@ already complete are skipped, so the script can be stopped and restarted.
 
 Usage (from inside speech_anonymization/):
     python -m scripts.download_raw_audio --list                 # show what would be downloaded
-    python -m scripts.download_raw_audio                        # all 17 participants (~4.3 GB on disk)
+    python -m scripts.download_raw_audio                        # all 17 participants (~5.2 GB on disk)
     python -m scripts.download_raw_audio --participants P-02    # just one
 """
 
@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Callable
 
 URL = "https://zenodo.org/api/records/18972388/files/02%20Raw%20recordings.zip/content"
-DEFAULT_OUT = Path(__file__).resolve().parent.parent.parent / "data" / "raw" / "elte_barks_raw_audio"
+DEFAULT_OUT = Path(__file__).resolve().parent.parent.parent / "data" / "elte_barks" / "raw_audio"
 AUDIO_RE = re.compile(r"^02 Raw recordings/(P-\d\d)/Audios/([^/]+\.wav)$", re.IGNORECASE)
 CHUNK = 8 << 20
 

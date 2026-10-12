@@ -8,7 +8,7 @@
 #
 # Usage (from inside speech_anonymization/):  bash scripts/prepare_raw_audio.sh
 set -euo pipefail
-SRC="${1:-../data/raw/elte_barks_raw_audio}"
+SRC="${1:-../data/elte_barks/raw_audio}"
 DST="${2:-../data/elte_barks/raw16k}"
 command -v ffmpeg >/dev/null || { echo "ffmpeg is needed (brew install ffmpeg)"; exit 1; }
 find "$SRC" -type f \( -iname '*.wav' \) | sort | while read -r f; do

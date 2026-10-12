@@ -368,7 +368,7 @@ Caveats:
 
 ```bash
 python -m scripts.download_raw_audio --list   # 48 audio files, 2.04 GB, out of the 43 GB raw zip
-python -m scripts.download_raw_audio          # downloads only the audio, using HTTP range requests
+python -m scripts.download_raw_audio          # downloads only the audio (HTTP range requests) -> ../data/elte_barks/raw_audio/
 bash scripts/prepare_raw_audio.sh             # -> ../data/elte_barks/raw16k/P-xx/*.flac (16 kHz mono)
 ```
 
