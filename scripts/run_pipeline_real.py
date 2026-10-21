@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import time
 from pathlib import Path
@@ -98,18 +99,45 @@ def main() -> None:
     p.add_argument("--summarize-only", action="store_true")
     p.add_argument("--sessions", nargs="+", default=None, help="only these sessions (quick runs)")
     p.add_argument("--output-dir", type=Path, default=OUT / "pipeline_real")
+    p.add_argument("--human-oof", type=Path, default=OUT / "human_detector" / "oof_predictions.npz",
+                   help="human detector predictions (e.g. outputs/human_detector_micfusion/oof_predictions.npz, Step 15)")
+    p.add_argument("--dog-oof", type=Path, default=OUT / "hybrid_routing" / "dog_oof_predictions.npz")
+    p.add_argument("--extra-configs", type=Path, default=None,
+                   help='JSON {name: ["trained", human_threshold, dog_threshold_or_null]} added to the built-in configs')
+    p.add_argument("--remover", choices=["dtln", "gtcrn", "gtcrn_ft"], default="dtln",
+                   help="speech estimate for the subtraction part (gtcrn_ft: fine-tuned model of the other participant group)")
     args = p.parse_args()
+    if args.extra_configs:
+        extra = {k: tuple(v) for k, v in json.loads(args.extra_configs.read_text()).items()}
+        CONFIGS.update(extra)
+        if args.configs == [c for c in CONFIGS if c not in extra]:  # default list: run only the new ones
+            args.configs = list(extra)
     sess_dir = args.output_dir / "sessions"
     sess_dir.mkdir(parents=True, exist_ok=True)
     torch.set_num_threads(1)
     sessions = load_sessions(args.data_root)
 
     if not args.summarize_only:
-        human_p = split_per_session(sessions, np.load(OUT / "human_detector" / "oof_predictions.npz")["prob"])
-        dog_p = split_per_session(sessions, np.load(OUT / "hybrid_routing" / "dog_oof_predictions.npz")["prob"])
+        human_p = split_per_session(sessions, np.load(args.human_oof)["prob"])
+        # a config may name its own detector predictions as 4th entry (compare detectors in one run)
+        other_p: dict = {}
+        for c in args.configs:
+            if len(CONFIGS[c]) > 3 and CONFIGS[c][3] not in other_p:
+                other_p[CONFIGS[c][3]] = split_per_session(sessions, np.load(OUT.parent / CONFIGS[c][3])["prob"])
+        dog_p = split_per_session(sessions, np.load(args.dog_oof)["prob"])
         before = {r["id"]: r["before"] for r in csv.DictReader(open(OUT / "asr_real" / "per_event.csv", encoding="utf-8"))}
         asr = WhisperASR("small", language="", num_threads=args.threads)
-        enhancer = ENHANCERS["dtln"]()
+        from vad_anonymization.enhancers import GTCRNTorchEnhancer
+
+        def get_remover(session_name: str):
+            if args.remover == "dtln":
+                return ENHANCERS["dtln"]()
+            if args.remover == "gtcrn":
+                return GTCRNTorchEnhancer()
+            other = "even" if int(session_name[2:4]) % 2 else "odd"  # never the participant's own group
+            return GTCRNTorchEnhancer(checkpoint=Path(__file__).resolve().parent.parent / "models" / "gtcrn" / f"gtcrn_ft_{other}.pt")
+
+        removers: dict = {}
         silero = SpeechDetector(threshold=0.5)
         t0 = time.time()
         for i, sess in enumerate(sessions):
@@ -123,18 +151,24 @@ def main() -> None:
             if not todo:
                 continue
             audio = load_audio(sess.audio_path, SAMPLE_RATE)
+            asr_cache: dict = {}
             n, total = audio.shape[-1], audio.shape[-1] / SAMPLE_RATE
             centres = np.load(OUT / "human_detector" / "features" / f"{sess.name}.npz")["centres"]
             dog_mask_true = segments_to_sample_mask([SpeechSegment(d.start_s, d.end_s) for d in sess.dog], n)
             human_mask_true = segments_to_sample_mask([SpeechSegment(e.start_s, e.end_s) for e in sess.human], n)
             dog_only_true = dog_mask_true & ~human_mask_true
-            s_hat = enhancer.enhance(audio)  # one speech estimate per session, reused by every config
+            key = "x" if args.remover != "gtcrn_ft" else int(sess.name[2:4]) % 2
+            if key not in removers and any(CONFIGS[c][2] is not None for c in todo):
+                removers[key] = get_remover(sess.name)
+            needs_remover = any(CONFIGS[c][2] is not None and CONFIGS[c][0] != "silero" for c in todo)
+            s_hat = removers[key].enhance(audio) if needs_remover else None  # one speech estimate per session
             for name in todo:
-                kind, th_h, th_d = CONFIGS[name]
+                kind, th_h, th_d = CONFIGS[name][:3]
+                probs = other_p[CONFIGS[name][3]] if len(CONFIGS[name]) > 3 else human_p
                 if kind == "silero":
                     h_segs = silero.detect(audio)
                 else:
-                    h_segs = frames_to_segments(centres, human_p[sess.name] >= th_h, total)
+                    h_segs = frames_to_segments(centres, probs[sess.name] >= th_h, total)
                 h_mask = segments_to_sample_mask(h_segs, n)
                 if th_d is None:
                     y = vad_mute(audio, h_segs)
@@ -152,8 +186,14 @@ def main() -> None:
                     if b - a < int(0.1 * SAMPLE_RATE) or eid not in before:
                         continue
                     ref = before[eid]
-                    # untouched window = identical audio: reuse the original transcript
-                    hyp = asr.transcribe(loud(y[a:b])) if h_mask[a:b].any() else ref
+                    if h_mask[a:b].any():
+                        # identical audio in this window (another config muted the same samples): reuse
+                        key_w = (a, b, hashlib.md5(y[a:b].numpy().tobytes()).hexdigest())
+                        if key_w not in asr_cache:
+                            asr_cache[key_w] = asr.transcribe(loud(y[a:b]))
+                        hyp = asr_cache[key_w]
+                    else:
+                        hyp = ref  # untouched window = identical audio: reuse the original transcript
                     ea, eb = int(e.start_s * SAMPLE_RATE), int(e.end_s * SAMPLE_RATE)
                     events.append({
                         "id": eid, "duration_s": round(e.duration_s, 3),

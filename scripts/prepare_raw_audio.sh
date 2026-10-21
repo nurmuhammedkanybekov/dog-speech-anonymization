@@ -15,6 +15,6 @@ find "$SRC" -type f \( -iname '*.wav' \) | sort | while read -r f; do
   rel="${f#"$SRC"/}"; out="$DST/${rel%.*}.flac"
   [ -s "$out" ] && { echo "skip $rel"; continue; }
   mkdir -p "$(dirname "$out")"
-  ffmpeg -hide_banner -loglevel error -y -i "$f" -af "pan=mono|c0=c0" -ar 16000 -sample_fmt s16 "$out"
+  ffmpeg -nostdin -hide_banner -loglevel error -y -i "$f" -af "pan=mono|c0=c0" -ar 16000 -sample_fmt s16 "$out"
   echo "ok   $rel -> $(du -h "$out" | cut -f1)"
 done

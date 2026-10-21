@@ -156,4 +156,38 @@ def _fit_length(x: torch.Tensor, n: int) -> torch.Tensor:
     return x[:n] if x.shape[-1] >= n else torch.nn.functional.pad(x, (0, n - x.shape[-1]))
 
 
-ENHANCERS = {cls.name: cls for cls in (DTLNEnhancer, GTCRNEnhancer, DeepFilterNetEnhancer)}
+class GTCRNTorchEnhancer:
+    """GTCRN as a trainable PyTorch model (vad_anonymization/gtcrn_model.py).
+
+    With the default checkpoint (the authors' DNS3 weights) it is the same model
+    as ``GTCRNEnhancer``; with ``checkpoint=`` it loads a fine-tuned version
+    (scripts/finetune_gtcrn.py). Offline: STFT 512 / hop 256, sqrt-Hann window.
+    """
+
+    name = "gtcrn_pt"
+    N_FFT, HOP = 512, 256
+
+    def __init__(self, checkpoint: Path | str | None = None, model_dir: Path = DEFAULT_MODEL_DIR) -> None:
+        from vad_anonymization.gtcrn_model import GTCRN
+
+        path = Path(checkpoint) if checkpoint else Path(model_dir) / "gtcrn" / "model_trained_on_dns3.tar"
+        state = torch.load(path, map_location="cpu")
+        self.model = GTCRN()
+        self.model.load_state_dict(state["model"] if "model" in state else state)
+        self.model.eval()
+        self.window = torch.hann_window(self.N_FFT).pow(0.5)
+
+    def spec(self, wave: torch.Tensor) -> torch.Tensor:
+        """(..., samples) -> (..., F, T, 2) as the model expects."""
+        return torch.view_as_real(torch.stft(wave, self.N_FFT, self.HOP, self.N_FFT, self.window, return_complex=True))
+
+    def wave(self, spec: torch.Tensor, length: int) -> torch.Tensor:
+        return torch.istft(torch.view_as_complex(spec.contiguous()), self.N_FFT, self.HOP, self.N_FFT, self.window, length=length)
+
+    @torch.no_grad()
+    def enhance(self, wave: torch.Tensor) -> torch.Tensor:
+        x = wave.float()
+        return self.wave(self.model(self.spec(x[None]))[0], x.shape[-1])
+
+
+ENHANCERS = {cls.name: cls for cls in (DTLNEnhancer, GTCRNEnhancer, DeepFilterNetEnhancer, GTCRNTorchEnhancer)}

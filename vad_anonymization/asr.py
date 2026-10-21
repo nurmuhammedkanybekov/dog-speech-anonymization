@@ -55,9 +55,12 @@ def normalize_text(text: str) -> str:
     """Lower case, letters/digits/apostrophes only, single spaces.
 
     Whisper's sound tags such as "(dog barks)" or "[BLANK_AUDIO]" are dropped:
-    they describe the audio, they are not words someone said.
+    they describe the audio, they are not words someone said. This includes a
+    tag that Whisper's output cuts off before the closing bracket.
     """
     text = re.sub(r"\([^)]*\)|\[[^\]]*\]|\*[^*]*\*", " ", text)
+    # a tag cut off at the end of Whisper's output ("(wind blowing") is still a tag, not speech (fixed in Step 19)
+    text = re.sub(r"\([^)]*$|\[[^\]]*$|\*[^*]*$", " ", text)
     text = re.sub(r"[^\w' ]+", " ", text.lower().replace("-", " "))
     return " ".join(text.split())
 

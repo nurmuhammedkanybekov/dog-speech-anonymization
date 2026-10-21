@@ -4,3 +4,8 @@ sherpa-onnx==1.13.8
 torchvggish==0.2
 scikit-learn==1.9.1
 matplotlib>=3.8
+einops==0.8.2
+pyroomacoustics==0.10.1
+scipy
+# Step 16: EfficientAT (cloned into models/EfficientAT) needs torchvision
+torchvision==0.24.1
