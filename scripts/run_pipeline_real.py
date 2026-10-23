@@ -123,7 +123,13 @@ def main() -> None:
         other_p: dict = {}
         for c in args.configs:
             if len(CONFIGS[c]) > 3 and CONFIGS[c][3] not in other_p:
-                other_p[CONFIGS[c][3]] = split_per_session(sessions, np.load(OUT.parent / CONFIGS[c][3])["prob"])
+                z = np.load(OUT.parent / CONFIGS[c][3])
+                if "hop_s" in z:  # Step 25c: 20 ms predictions on the Whisper-encoder grid
+                    parts = np.split(z["prob"], np.cumsum(z["lengths"])[:-1])
+                    other_p[CONFIGS[c][3]] = {"fine": (float(z["pad_s"]), float(z["gap_s"])),
+                                              **{s.name: q for s, q in zip(sessions, parts)}}
+                else:
+                    other_p[CONFIGS[c][3]] = split_per_session(sessions, z["prob"])
         dog_p = split_per_session(sessions, np.load(args.dog_oof)["prob"])
         before = {r["id"]: r["before"] for r in csv.DictReader(open(OUT / "asr_real" / "per_event.csv", encoding="utf-8"))}
         asr = WhisperASR("small", language="", num_threads=args.threads)
@@ -167,6 +173,12 @@ def main() -> None:
                 probs = other_p[CONFIGS[name][3]] if len(CONFIGS[name]) > 3 else human_p
                 if kind == "silero":
                     h_segs = silero.detect(audio)
+                elif "fine" in probs:
+                    from scripts.train_fine_detector import fine_segments
+
+                    times = np.load(OUT / "whisper_enc" / f"{sess.name}.npz")["times"]
+                    h_segs = [SpeechSegment(a, b) for a, b in
+                              fine_segments(times, probs[sess.name] >= th_h, total, *probs["fine"])]
                 else:
                     h_segs = frames_to_segments(centres, probs[sess.name] >= th_h, total)
                 h_mask = segments_to_sample_mask(h_segs, n)

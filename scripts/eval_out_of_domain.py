@@ -162,7 +162,8 @@ def main() -> None:
             speech_files = split_speakers(speech_files)[1]
         det = dict(np.load(MODEL_PATH))
         extra_models = {name: dict(np.load(MODEL_PATH.parent / f))           # Steps 20c / 21a, if trained
-                        for name, f in (("eat40aug", "human_detector_eat40_aug.npz"), ("eat40aug2", "human_detector_eat40_aug2.npz"))
+                        for name, f in (("eat40aug", "human_detector_eat40_aug.npz"), ("eat40aug2", "human_detector_eat40_aug2.npz"),
+                                        ("v2", "human_detector_v2.npz"))   # Step 25: Whisper encoder + mn40
                         if (MODEL_PATH.parent / f).exists()}
         from scripts.extract_efficientat import load_model
 
@@ -170,26 +171,32 @@ def main() -> None:
         levels = [str(x) for x in det["levels"]]
         silero = SpeechDetector(threshold=0.5)
         asr = WhisperASR("small", language="", num_threads=1)
+        wanted = [f"{fam}_{lv}" for fam in ["eat40", *extra_models] for lv in levels] + ["silero", "oracle"]
         for k in range(args.n_scenes):
             f = OUT / "scenes" / f"scene_{k:03d}.json"
-            if k % args.n_workers != args.worker or f.exists():
+            old = json.loads(f.read_text()) if f.exists() else None
+            if k % args.n_workers != args.worker or (old and all(m in old["methods"] for m in wanted)):
                 continue
             mix, sp_act, dog_act, utts = make_scene(k, speech_files, transcripts, dog_files, *counts)
             x = torch.from_numpy(mix)
             nf = len(sp_act)
-            prob, centres = human_probability(x, det, eat)
-            methods = {f"eat40_{lv}": flagged_segments(prob, centres, float(det["thresholds"][i]), SCENE_S)
-                       for i, lv in enumerate(levels)}
-            for mname, mdet in extra_models.items():
-                prob_a, _ = human_probability(x, mdet, eat)
-                methods.update({f"{mname}_{lv}": flagged_segments(prob_a, centres, float(mdet["thresholds"][i]), SCENE_S)
-                                for i, lv in enumerate(levels)})
-            methods["silero"] = [(s.start_s, s.end_s) for s in silero.detect(x)]
-            methods["oracle"] = [(u["start_s"], u["end_s"]) for u in utts]
+            done = old["methods"] if old else {}
+            methods = {}
+            for fam, mdet in [("eat40", det), *extra_models.items()]:
+                if all(f"{fam}_{lv}" in done for lv in levels):
+                    continue                      # computed in an earlier run (the scenes are deterministic)
+                prob_a, centres = human_probability(x, mdet, eat)
+                mlevels = [str(v) for v in mdet["levels"]]
+                methods.update({f"{fam}_{lv}": flagged_segments(prob_a, centres, float(mdet["thresholds"][mlevels.index(lv)]), SCENE_S)
+                                for lv in levels})
+            if "silero" not in done:
+                methods["silero"] = [(s.start_s, s.end_s) for s in silero.detect(x)]
+            if "oracle" not in done:
+                methods["oracle"] = [(u["start_s"], u["end_s"]) for u in utts]
             dog_only = dog_act & ~sp_act
-            res = {"scene": k, "speech_s": float(sp_act.sum()) / 100, "dog_only_s": float(dog_only.sum()) / 100, "methods": {}}
+            res = {"scene": k, "speech_s": float(sp_act.sum()) / 100, "dog_only_s": float(dog_only.sum()) / 100, "methods": dict(done)}
             windows = [(max(0, int((u["start_s"] - CONTEXT_S) * SR)), min(len(mix), int((u["end_s"] + CONTEXT_S) * SR))) for u in utts]
-            res["original"] = [asr.transcribe(loud(x[a:b])) for a, b in windows]
+            res["original"] = old["original"] if old else [asr.transcribe(loud(x[a:b])) for a, b in windows]
             for name, segs in methods.items():
                 m = mask_from(segs, nf)
                 y = x.clone()
@@ -248,7 +255,8 @@ def plot(rows: list[dict], path: Path) -> None:
     import matplotlib.pyplot as plt
 
     families = {"eat40": ("ELTE only (Steps 17-19)", "#1baf7a"), "eat40aug": ("+ other dogs as negatives (20c)", "#2a78d6"),
-                "eat40aug2": ("+ other dogs and speech-under-bark (21a)", "#eb6834")}
+                "eat40aug2": ("+ other dogs and speech-under-bark (21a)", "#eb6834"),
+                "v2": ("Whisper encoder + mn40, ELTE only (Step 25)", "#d23c3c")}
     fig, ax = plt.subplots(figsize=(7.6, 4.8), facecolor="#fcfcfb")
     ax.set_facecolor("#fcfcfb")
     by = {r["method"]: r for r in rows}

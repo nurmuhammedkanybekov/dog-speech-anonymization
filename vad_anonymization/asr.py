@@ -24,6 +24,7 @@ SAMPLE_RATE = 16_000
 WHISPER_MODELS = {
     "small.en": "sherpa-onnx-whisper-small.en",  # English (LibriSpeech tests)
     "small": "sherpa-onnx-whisper-small",        # multilingual (real Hungarian recordings)
+    "turbo": "sherpa-onnx-whisper-turbo",        # large-v3-turbo: the stronger attacker of Step 22
 }
 
 
@@ -49,6 +50,40 @@ class WhisperASR:
         stream.accept_waveform(SAMPLE_RATE, x)
         self._rec.decode_stream(stream)
         return stream.result.text.strip()
+
+
+PARAKEET_DIR = "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8"
+
+
+class ParakeetASR(WhisperASR):
+    """NVIDIA Parakeet TDT 0.6B v3 (int8 sherpa-onnx export): a second, non-Whisper attacker (Step 25).
+
+    A FastConformer transducer trained on different data than Whisper, for 25
+    European languages including Hungarian. The detector of Step 25 uses
+    Whisper's encoder, so an attacker from another model family checks that
+    the result is not specific to Whisper. Fetched by
+    ``python -m scripts.download_models --asr-parakeet``.
+    """
+
+    def __init__(self, num_threads: int = 1, model_dir: Path = DEFAULT_MODEL_DIR) -> None:
+        import sherpa_onnx
+
+        d = Path(model_dir) / PARAKEET_DIR
+        self._rec = sherpa_onnx.OfflineRecognizer.from_transducer(
+            encoder=str(d / "encoder.int8.onnx"),
+            decoder=str(d / "decoder.int8.onnx"),
+            joiner=str(d / "joiner.int8.onnx"),
+            tokens=str(d / "tokens.txt"),
+            model_type="nemo_transducer",
+            num_threads=num_threads,
+        )
+
+
+def make_asr(model: str, num_threads: int = 1):
+    """'small', 'small.en', 'turbo' (Whisper) or 'parakeet'."""
+    if model == "parakeet":
+        return ParakeetASR(num_threads=num_threads)
+    return WhisperASR(model, language="" if model != "small.en" else "en", num_threads=num_threads)
 
 
 def normalize_text(text: str) -> str:

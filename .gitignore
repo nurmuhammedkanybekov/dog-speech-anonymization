@@ -13,3 +13,4 @@ models/
 *.npz
 *.onnx
 *.pth
+_to_delete/

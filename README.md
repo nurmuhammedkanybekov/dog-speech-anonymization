@@ -6,54 +6,65 @@ speech in the lab's recordings so they can be anonymized before further
 use. 
 The other two tasks (Sound-source localization and Echo cancellation) both of them are out of scope for this sub-repository.
 
-## Current approach and results (21 October 2026)
+## Current approach and results (22 October 2026)
 
 The goal is to remove human speech from the recordings while keeping the
-dog vocalizations intact. The current recommended pipeline needs no
+dog vocalizations intact. The recommended pipeline (Step 25) needs no
 annotations at run time:
 
-1. **Detect human sounds** with a frozen audio model, EfficientAT `mn40_as`
-   (AudioSet), whose 527 class scores feed a logistic regression trained on the
-   lab's expert annotations. The scores are smoothed over 5 frames of 0.24 s
-   (Steps 16–17).
-2. **Mute** the flagged time (±0.12 s) in the original file. Subtracting a
-   speech estimate where a dog overlaps (the hybrid, with a fine-tuned GTCRN)
-   was never better than muting at equal dog loss (Steps 12–16).
-3. **Check privacy independently**: Whisper acts as the attacker on every
-   annotated human event (Steps 7–8, metric fixed in Step 19).
+1. **Detect human sounds** with two frozen networks: Whisper small's encoder
+   (trained on 680,000 hours of speech) and EfficientAT `mn40_as` (527
+   AudioSet sound classes). A logistic regression, trained on the lab's
+   expert annotations to tell human sounds from dog vocalizations, combines
+   them; its output is smoothed over 5 frames of 0.24 s.
+2. **Mute** the flagged time (±0.12 s) in the original file; everything else
+   stays bit-identical. Subtracting a speech estimate instead was never
+   better (Steps 12–16).
+3. **Check privacy independently** with three speech recognizers as
+   attackers: Whisper small, Whisper large-v3-turbo and NVIDIA Parakeet (a
+   different model family), on every annotated human event (Steps 8, 22, 25).
 
-Results on the ELTE BARKS play sessions (581 human events, 17 participants,
-every model tested on participants it never saw). The thresholds can also be
-chosen without seeing the test participant (nested, Step 19), with the same
-results:
+Results on the ELTE BARKS play sessions (581 human events, 17 dogs, every
+model tested on dogs it never saw; Whisper small as the attacker):
 
-| setting (`--strictness`) | human events with 2+ readable words | original words still readable | dog-only time lost |
-|---|---|---|---|
-| no processing | 19.8% | 100% | 0% |
-| Step 9 detector (VGGish), 6% of dog frames flagged | 6.0% | 19.9% | 9.0% |
-| `light` | 2.2% | 9.6% | 7.9% |
-| `standard` (default) | 1.4% | 5.6% | 12.5% |
-| `strict` | 0.9% | 4.4% | 17.9% |
+| setting (`--strictness`) | human events with 2+ readable words | original words still readable | dog-only time lost | play pants untouched |
+|---|---|---|---|---|
+| no processing | 19.8% | 100% | 0% | 100% |
+| previous default (Step 17, `standard`) | 1.4% | 5.6% | 12.5% | 71% |
+| `light` | 1.7% | 7.8% | 4.3% | 90% |
+| **`standard` (default)** | **1.0%** | 5.2% | **8.0%** | **82%** |
+| `strict` | 0.7% | 3.5% | 12.3% | 73% |
 
-Whisper "reads" 2+ words in 1.0% of background-only windows of the same
-length.
+- Whisper "reads" 2+ words in 1.0% of background-only windows: the
+  `standard` setting reaches that floor.
+- Compared with the previous default, a third less dog sound is lost (95% CI
+  of the reduction 21–51%, participant bootstrap) with no significant change
+  in privacy, for all three attackers. Barks are the one call type that loses
+  (67% vs 75% untouched); see Step 25.
+- On synthetic recordings with unseen speakers, unseen dogs and simulated
+  rooms (Steps 20–21), `standard` leaves 0 of 120 utterances readable.
+- Re-checks (Step 22): no unannotated speech outside the annotated events; a
+  bigger attacker does not change the conclusions.
 
-**Anonymize a recording** (after the setup below and `git clone https://github.com/fschmid56/EfficientAT models/EfficientAT`):
+**Anonymize a recording** (after the setup below, `git clone https://github.com/fschmid56/EfficientAT models/EfficientAT`
+and `python -m scripts.download_models --asr`):
 
 ```bash
 python -m scripts.anonymize_recording input.wav anonymized.wav --strictness standard
 ```
 
-The command runs at about 19x real time on 2 CPU cores and keeps the sample
+The command runs at about 8x real time on 2 CPU cores and keeps the sample
 rate, channels and bit depth of the input. It needs the trained model
-`models/human_detector_eat40.npz`, made by `python -m scripts.train_final_detector`.
-That model is kept out of git until the dataset question is settled. For
-recordings unlike ELTE's, see Step 21: `--model models/human_detector_eat40_aug2.npz`
-puts privacy first, `_aug` keeps more dog sound.
+`models/human_detector_v2.npz`, made by `python -m scripts.train_final_detector`.
+That model, and the anonymized copy of the dataset (`data/elte_barks/anonymized_v2/`,
+Steps 24–25), are kept out of git until the dataset question is settled.
+The Step 18 model (`--model models/human_detector_eat40.npz`) keeps more barks.
 
-Every step, with its commands and full results, is below (Steps 1–21). The
+A paper draft with these results is in `paper/` (`main.pdf`).
+
+Every step, with its commands and full results, is below (Steps 1–25). The
 early steps describe the approaches that were tried and replaced: Silero VAD,
-VGGish, and hybrid removal with DTLN.
+VGGish, hybrid removal with DTLN, and EfficientAT alone.
 
 ## Project layout
 
@@ -74,7 +85,8 @@ speech_anonymization/
 ├── tests/                      # pytest unit tests (offline, synthetic signals)
 ├── docs/target_definition.md   # what counts as "human speech" to remove (tiers A/B/C)
 ├── docs/multimic_notes_for_localization.md  # the three synchronized microphones (for the TDoA work)
-├── reports/                    # progress reports (5 Oct, 21 Oct 2026)
+├── reports/                    # progress reports (5 Oct, 21 Oct, 22 Oct 2026)
+├── paper/                      # paper draft (LaTeX source, figure, PDF)
 ├── models/                     # downloaded weights (git-ignored)
 └── outputs/                    # generated results (git-ignored; real voices stay local)
 ```
@@ -1116,6 +1128,349 @@ about 3 minutes.
 Caveat (as in Step 20): the out-of-domain scenes are synthetic. They are
 held out by speaker, dog clip and seed, but made by the same generator as
 the training scenes. Real recordings from another lab would be the real test.
+
+**Step 22: re-checking the evaluation from the lab's side**
+
+```bash
+python -m scripts.eval_dog_events                                   # 22a: dog calls by type, as events (seconds, no Whisper)
+python -m scripts.audit_full_sessions --worker 0 --n-workers 2     # 22b: Whisper over whole recordings (~40 min), and --worker 1
+python -m scripts.audit_full_sessions --summarize-only
+python -m scripts.download_models --asr-turbo                       # Whisper large-v3-turbo (~1 GB) for 22c
+python -m scripts.attack_stronger_asr --worker 0 --n-workers 2     # 22c: Whisper large-v3-turbo as the attacker, and --worker 1
+python -m scripts.attack_stronger_asr --summarize-only
+```
+
+Steps 9–21 measured two things: readable words in the annotated human
+events, and dog-only TIME muted. This step asks whether these measure what
+the lab cares about.
+
+*22a. Dog calls by type, counted as events.* 89% of the annotated dog time
+is panting (3,521 of 3,966 s), so "dog time lost" is mostly a panting
+number. The lab analyses calls as events, and a growl with its middle muted
+is a damaged growl. For each call type, counting events with no human sound
+on them: intact (not one sample muted) / lost (half or more muted):
+
+| call type (events) | VGGish, 6% | mn40, light (6%) | mn40, standard (10%) | mn40, strict (15%) |
+|---|---|---|---|---|
+| Pant (1,116) | 77 / 6% | 79 / 10% | 71 / 15% | 62 / 22% |
+| Other (243) | 86 / 9% | 83 / 13% | 75 / 21% | 67 / 24% |
+| Growl (188) | 79 / 12% | **92 / 5%** | 90 / 7% | 84 / 11% |
+| Grunt (159) | 77 / 18% | 79 / 19% | 66 / 28% | 60 / 36% |
+| Bark/yelp (48) | 83 / 6% | 88 / 6% | 75 / 19% | 62 / 31% |
+| Moan (32) | 56 / 34% | 72 / 25% | 62 / 28% | 53 / 38% |
+| Whine (7) | 43 / 57% | 14 / 86% | 14 / 86% | 14 / 86% |
+
+- The rest of each row is "damaged" (partly muted). Calls that overlap a human
+  sound (178 pants, 10 growls, ...) are mostly lost at every setting. That is
+  the price of muting, not a detector error.
+- Growls are well protected. Whines are the one call type the detector
+  takes for a human voice: 6 of 7 are lost (only 7 events, but a clear
+  pattern).
+- Which calls matter most decides which setting is right. That is a question
+  for the lab (see `outputs/dog_events/by_call_type.csv` for every setting).
+
+*22b. Whole recordings, not only the annotated events.* Every privacy number
+so far read only the windows around the 581 annotated human events. Speech
+the annotators did not mark would never have been noticed. Whisper therefore
+read every 8 s window that has no annotated human sound within 0.5 s:
+519 windows, 68 minutes, about half of all audio.
+
+- 10 windows contain 2+ "words" in the ORIGINAL. Eight are typical Whisper
+  hallucinations over dog sounds: "2.5kg" or "2.5L" (five times), "ТРЕВОЖНАЯ
+  МУЗЫКА" ("anxious music") twice, and "2. 2. 2.".
+- Two are short Korean phrases on Hungarian audio ("hey, careful"; a repeated
+  "I..."). They could be misheard real speech. The standard setting mutes the
+  first, and the second keeps two syllables. Both are worth one listen in the
+  listening audit.
+- **No substantial unannotated speech was found.** The expert annotations
+  cover the speech in these recordings, so the event-based privacy numbers
+  of Steps 8–21 are not missing a significant source of leaks.
+- After anonymization, 6 (light, standard) or 4 (strict) of these windows
+  still produce text, mostly the same hallucinations.
+
+*22c. A stronger attacker.* All privacy numbers so far used Whisper small
+(244M parameters) to try to read words back. Here Whisper large-v3-turbo
+(809M parameters, int8 sherpa-onnx export, `models/sherpa-onnx-whisper-turbo`)
+read the same 581 event windows, before and after muting:
+
+| version | turbo: 2+ words | turbo: words of the original read back | small: 2+ words |
+|---|---|---|---|
+| original | 41.0% | 100% | 19.8% |
+| background, no human (floor) | 24.5% | – | 1.0% |
+| VGGish, 6% | 20.7% | 35.0% | 6.0% |
+| mn40, light (6%) | 10.3% | 20.8% | 2.2% |
+| mn40, standard (10%) | 7.1% | 13.1% | 1.4% |
+| mn40 human-vs-dog (Step 23), standard | 6.9% | 11.7% | 1.2% |
+
+- Turbo writes text on a quarter of the windows with NO human in them
+  ("*crickets*" aside, it invents phrases). So "2+ words" from turbo is
+  mostly invented text, and its rates are well above the floor of Whisper
+  small for every version, including the original.
+- The ranking does not change: mn40 at 6% leaves half as many readable
+  events as VGGish at 6% (McNemar 80 vs 20 discordant events, p < 0.0001).
+- A stricter test counts only **confirmed speech**: events where both
+  recognizers read 2+ words in the original and agree on at least half of
+  them. Only 34 of the 581 events pass. After muting, an event still leaks
+  if either recognizer reads back 2+ of the words it read in the original:
+
+| version | confirmed speech events still leaking (of 34) |
+|---|---|
+| VGGish, 6% | 6 (18%) |
+| mn40, light (6%) | 2 (6%) |
+| mn40, standard (10%) | 1 (3%): "she's like…" |
+| mn40 human-vs-dog, standard | 0 |
+
+- The difference VGGish vs mn40 at 6% on these 34 events is 6 vs 2
+  (p = 0.29): too few events for a test, but the same direction as above.
+- **A bigger recognizer does not change the conclusion.** It reads more
+  "words" everywhere, but most of them are invented. On speech both
+  recognizers agree on, at most one short phrase survives the standard
+  setting. (`outputs/attack_turbo/summary.csv`, `confirmed_speech.csv`)
+
+**Step 23: train for the trade-off we actually make (and what did not help)**
+
+```bash
+python -m scripts.train_objective_detector         # -> outputs/human_detector_objective/, configs_v23.json
+python -m scripts.run_pipeline_real --extra-configs outputs/configs_v23.json \
+       --configs obj40_mute_c06 obj40_mute_c10 obj40_mute_c15 --output-dir outputs/pipeline_real_v16 --worker 0 --n-workers 2
+python -m scripts.compare_detectors_pipeline
+python -m scripts.eval_dog_events
+```
+
+Muting background (no human, no dog) costs the lab nothing. Yet the
+detector was trained to separate human frames from every other frame,
+including room noise. Training it on human vs dog-only frames instead (same
+inputs, same model, same threshold rule, no tuning) aims it at the actual
+trade-off:
+
+| | human time found at 6 / 10 / 15% of dog-only frames flagged | readable events (Whisper small) at 6 / 10 / 15% | background flagged at 10% |
+|---|---|---|---|
+| human vs everything (Steps 17–22) | 72.0 / 79.8 / 85.0% | 2.2 / 1.4 / 0.9% | 17% |
+| **human vs dog only** | **74.3 / 82.5 / 86.7%** | **1.9 / 1.2 / 0.7%** | 29% |
+
+- The detector finds 2–3 points more human time at every dog cost. Readable
+  events drop slightly at every level, but the event-level difference is
+  not significant (McNemar p ≥ 0.6, 1–4 discordant events).
+- It mutes more background. That costs no dog sound but makes the files
+  quieter.
+- By call type, it protects the vocal calls better: at standard, grunts
+  intact 66% → 77%, barks 75% → 81%, moans 62% → 69%. Pants do slightly worse
+  (71% → 68%), because pants are almost all of the dog TIME that the threshold
+  holds fixed.
+
+So the choice between the two is about which dog sounds matter. That is a
+question for the lab.
+
+Three other ideas were tested at the frame level and did **not** help:
+
+| idea | result (human time found at 6% dog cost) |
+|---|---|
+| train only on events with readable speech (Whisper labels) instead of all human sounds | worse: 65.0% (speech frames found: 87.3% vs 91.1%) |
+| normalize the class scores per recording (remove each session's own average) | worse: AUC 0.866–0.898 vs 0.912 |
+| subtract a separate dog detector's score | +3 points, but it needs a tuned weight; the objective change above gets the same gain without one |
+
+Training on all human sounds works better than training on speech alone,
+even for finding speech: the non-speech human sounds share the acoustics
+and add training examples.
+
+**Step 24: an anonymized copy of the dataset**
+
+```bash
+python -m scripts.make_release_segments                 # mute segments for every session and level (+ report.csv)
+python -m scripts.apply_mute_segments --level standard  # numpy + ffmpeg only -> ../data/elte_barks/anonymized_v1/standard/
+```
+
+The point of the project is recordings the lab can use. The deployable
+detector (trained on all 17 participants, Step 18) marked what to mute in
+all 30 sessions at each level. The muting was then applied to the ORIGINAL
+files: 48 kHz, their own sample format (16-bit, or 32-bit for P-01) and
+channels (stereo for P-05 and P-06).
+
+- Every file is checked: every sample outside the muted intervals is
+  bit-identical to the original, and every muted sample is zero (30 of 30
+  pass). `MANIFEST.csv` lists the SHA-256 of each original and anonymized file.
+
+| level | audio muted (of 125 min) | annotated human events mostly muted | dog calls intact (no human on them): pant / growl / grunt / bark / moan / whine |
+|---|---|---|---|
+| light | 18.5% | 450 / 581 | 918/1116 · 179/188 · 135/159 · 46/48 · 27/32 · 2/7 |
+| standard | 24.1% | 495 / 581 | 811/1116 · 176/188 · 118/159 · 45/48 · 24/32 · 1/7 |
+| strict | 29.9% | 520 / 581 | 729/1116 · 167/188 · 107/159 · 42/48 · 21/32 · 1/7 |
+
+- The share muted per session ranges from 3% to 75% (median 21%) at
+  standard. Some sessions are mostly talk.
+- The model has seen these participants, so these counts are better than
+  for a new recording. The leave-one-participant-out numbers (Steps 17–22)
+  are the estimate for new data.
+- The anonymized files stay on the lab's computers (`data/`, not in git).
+  Like the trained model, they can only be shared once the dataset
+  question is settled.
+
+**Step 25: listen like the attacker - Whisper's encoder as the detector's ears (new default)**
+
+```bash
+python -m scripts.download_models --asr --asr-turbo --asr-parakeet   # Whisper small (+ turbo, Parakeet for the attacks)
+python -m scripts.extract_whisper_encoder                    # 25a: Whisper small encoder, every 20 ms, all sessions (~7 min)
+python -m scripts.train_whisper_detector                     # 25b: inputs x objectives, leave one participant out (~25 min)
+python -m scripts.train_fine_detector --objective all        # 25c: 20 ms decisions (negative result, ~30 min)
+python -m scripts.run_pipeline_real --extra-configs outputs/configs_v25.json \
+       --configs wenc_eat_dog_mute_c03 wenc_eat_dog_mute_c06 wenc_eat_dog_mute_c10 wenc_eat_dog_mute_c15 \
+       --output-dir outputs/pipeline_real_v16                # Whisper small as attacker (~40 min)
+python -m scripts.compare_detectors_pipeline                 # recounted table
+python -m scripts.bootstrap_step25                           # participant bootstrap: old vs new settings
+python -m scripts.attack_stronger_asr --model parakeet --configs wenc_eat_dog_mute_c03 wenc_eat_dog_mute_c06 wenc_eat_dog_mute_c10 \
+       --worker 0 --n-workers 2                              # and --worker 1; then --summarize-only (~10 min)
+python -m scripts.attack_stronger_asr --model turbo --configs wenc_eat_dog_mute_c03 wenc_eat_dog_mute_c06 wenc_eat_dog_mute_c10 \
+       --worker 0 --n-workers 2                              # and --worker 1 (~1 h)
+python -m scripts.eval_dog_events                            # dog calls by type
+python -m scripts.plot_step25                                # outputs/detectors_pipeline/step25_three_attackers.png
+python -m scripts.train_final_detector                       # 25d: models/human_detector_v2.npz (the new default)
+python -m scripts.eval_out_of_domain --heldout-dogs          # adds the v2 model to the synthetic scenes of Steps 20-21
+python -m scripts.make_release_segments                      # 25e: outputs/release_v2/
+python -m scripts.apply_mute_segments --level standard       # ../data/elte_barks/anonymized_v2/standard/
+```
+
+The privacy attacker is a speech recognizer, but the detector listened through
+AudioSet models, trained to name 527 kinds of sound, not to understand speech.
+Whisper's encoder was trained on 680,000 hours of speech and describes every
+20 ms of audio with 768 numbers. Step 25 gives the detector those numbers.
+
+*25a-b. What the detector hears.* Same recipe as Steps 17 and 23 (logistic
+regression, 5-frame smoothing, leave one participant out); only the input
+changes. Share of human frames found at 3 / 6 / 10 / 15% of the dog-only frames
+flagged:
+
+| input | trained vs | 3% | 6% | 10% | 15% | AUC (human vs dog) |
+|---|---|---|---|---|---|---|
+| EfficientAT mn40 (Steps 17-24) | everything | 62.3 | 72.1 | 80.0 | 84.9 | 0.927 |
+| EfficientAT mn40 (Step 23) | dog only | 65.6 | 74.4 | 82.5 | 86.7 | 0.938 |
+| Whisper encoder | everything | 70.2 | 78.6 | 85.4 | 90.9 | 0.948 |
+| Whisper encoder | dog only | 72.9 | 80.7 | 87.5 | 92.2 | 0.954 |
+| Whisper + mn40 | everything | 71.2 | 81.2 | 86.6 | 90.8 | 0.951 |
+| **Whisper + mn40** | **dog only** | **75.9** | **84.0** | **89.4** | **93.2** | **0.963** |
+
+- Whisper alone beats AudioSet at every dog cost. The two together are best.
+- Training against dog sounds only (Step 23) adds 1-5 points for every input.
+- At 3% dog cost, the new detector finds more human sound than the old one at 6%.
+
+*End to end* (Whisper small reads the 581 event windows, counted as in Step 19):
+
+| setting | readable events | words still readable | dog-only time lost |
+|---|---|---|---|
+| no processing | 19.8% | 100% | 0% |
+| background only (floor) | 1.0% | 0% | - |
+| old light (mn40, 6%) | 2.2% | 9.6% | 7.9% |
+| old standard (mn40, 10%) | 1.4% | 5.6% | 12.5% |
+| old strict (mn40, 15%) | 0.9% | 4.4% | 17.9% |
+| **new light (3%)** | 1.7% | 7.8% | **4.3%** |
+| **new standard (6%)** | **1.0%** | 5.2% | **8.0%** |
+| **new strict (10%)** | 0.7% | 3.5% | 12.3% |
+| new, 15% | 0.5% | 2.6% | 17.8% |
+
+- The new standard setting reaches Whisper's background floor (1.0%) and
+  loses 8.0% of the dog-only sound, against 12.5% for the old standard.
+- Participant bootstrap (`outputs/detectors_pipeline/bootstrap_step25.json`):
+  the dog loss drops by 36% at standard (95% CI 21-51%), 46% at light
+  (28-61%) and 31% at strict (16-45%). The privacy differences are not
+  significant (the CIs include zero: readable events within +-1.6 points,
+  words still readable within +-6 points).
+- "6% of dog-only frames" is an average over all dogs: per dog it ranges
+  from 0% to 19%.
+
+*Is that only because the detector and the attacker are both Whisper?* Two more
+attackers read the same windows: Whisper large-v3-turbo (809M) and NVIDIA
+**Parakeet TDT 0.6B v3**, a different model family (FastConformer transducer,
+trained on other data, 25 European languages including Hungarian). Since
+"2+ words" counts invented text (turbo writes text on 24.5% of background
+windows, Parakeet on 4.9%), the fair measure is the share of each attacker's
+own original words it can still read back:
+
+| setting | dog lost | Whisper small | turbo | Parakeet |
+|---|---|---|---|---|
+| old standard | 12.5% | 5.6% | 13.1% | 11.3% |
+| new standard | 8.0% | 5.2% | 14.9% | 9.2% |
+| new strict | 12.3% | 3.5% | 9.9% | 6.7% |
+
+- For all three attackers the new curve lies below the old one
+  (`outputs/detectors_pipeline/step25_three_attackers.png`): at the same dog
+  loss, fewer words are left. At the new standard, turbo reads back slightly
+  more than at the old standard (14.9 vs 13.1%) while 36% less dog is lost;
+  "new strict" matches the old dog loss and leaves fewer words for everyone.
+- On the 29 events where Parakeet and Whisper small agree on the original
+  words (clear speech), 1 is still readable after the new standard, 3 after
+  the old one.
+
+*Dog calls by type* (no human sound on them; intact = not one sample muted):
+
+| call (events) | old standard | new standard |
+|---|---|---|
+| Pant (1,116) | 71% | **82%** |
+| Other (243) | 75% | **83%** |
+| Growl (188) | 90% | **96%** |
+| Grunt (159) | 66% | **84%** |
+| Bark/yelp (48) | **75%** | 67% |
+| Moan (32) | 62% | **75%** |
+| Whine (7) | 14% | **29%** |
+
+- More of most call types survives. Barks are the main exception: the speech
+  encoder seems to hear the harmonic bark as voice-like. Sneezes also lose
+  (83% vs 92% intact, 24 events). For bark-focused studies the old
+  model is still there (`--model models/human_detector_eat40.npz`).
+- The dataset is about play panting ("Dog play pant"), and 82% of the pants
+  now stay untouched.
+
+*25c. What did not help.* About 40% of the dog sound lost lies within 1 s of
+a human sound, so finer boundaries looked promising. A classifier on every
+20 ms Whisper frame (context +-0.06 / 0.5 / 1.5 s, trained against all other
+frames) muted 68% of the human time at 3.6% dog loss, against 73% at 4.5% for
+the 0.24 s detector with the same input and objective, and
+interpolating the 0.24 s probabilities to 20 ms with tighter padding changed
+nothing. Adding neighbouring frames or the spread of the Whisper frames to the
+input did not help either (83.6% and 79.0% at 6%, vs 84.0%).
+
+*25d. The new default model.* `train_final_detector` (now `--recipe v2` by
+default) trains on all 17 participants and saves `models/human_detector_v2.npz`
+(19 kB); `anonymize_recording` uses it by default. It needs the Whisper small
+encoder (`download_models --asr`) next to EfficientAT. Check of the deployed
+code path: a model trained without P-03 and P-12, run through
+`anonymize_recording`'s code on their four sessions, gives probabilities that
+correlate 0.99 with the leave-one-participant-out ones, and the same recall
+and dog cost at each level.
+
+*25e. Anonymized copy v2* (in sample; the model saw these participants):
+
+| level | audio muted | human events mostly muted | pants intact | growls intact | grunts intact |
+|---|---|---|---|---|---|
+| light | 16.7% | 458 / 581 | 1029 / 1116 | 186 / 188 | 151 / 159 |
+| standard | 22.2% | 518 / 581 | 952 / 1116 | 182 / 188 | 141 / 159 |
+| strict | 28.4% | 548 / 581 | 855 / 1116 | 178 / 188 | 133 / 159 |
+
+Compared with release v1 (Step 24) at standard: less audio muted (22.2 vs
+24.1%), more human events covered (518 vs 495), more pants intact (952 vs 811).
+
+*Out of domain* (the synthetic scenes of Steps 20-21 with unseen speakers and
+unseen dogs; the v2 model unchanged, thresholds set on ELTE; Whisper small
+scored against the LibriSpeech reference text):
+
+| method | utterances with 2+ correct words | dog-only time muted |
+|---|---|---|
+| no processing | 99.2% | 0% |
+| mute the exact utterances (oracle) | 0% | 47.3% |
+| Silero VAD | 11.7% | 32.8% |
+| old model (mn40), light / standard | 11.7% / 7.5% | 38.9% / 47.3% |
+| Step 21 model (+ other dogs and speech under barks), light | 0% | 63.3% |
+| **v2, light / standard** | **1.7% / 0%** | 41.1% / 56.6% |
+
+- Without any extra training data, v2 reaches the privacy of the oracle on
+  unseen speakers, unseen dogs and simulated rooms. The Step 21 model needed
+  synthetic training data and still loses more dog sound (63% vs 57%).
+- Foreign barks cost more dog sound here than ELTE's dogs do (as above, the
+  speech encoder treats barks as voice-like).
+- So one model now covers both cases. The `_aug` / `_aug2` models of Step 21
+  are no longer needed for new recordings.
+
+*Speed:* `anonymize_recording` with v2 runs at about 8x real time on 2 CPU
+cores (235 s of audio in 28 s, model loading included), against about 19x for
+the EfficientAT-only model: an hour of audio takes about 8 minutes.
 
 ## Testing
 

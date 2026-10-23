@@ -9,6 +9,10 @@ All weights come straight from the authors' GitHub repositories:
 With ``--asr`` it also fetches the Whisper "small" speech recognizers
 (OpenAI, MIT; int8 ONNX exports from github.com/k2-fsa/sherpa-onnx, ~0.5 GB
 each) used for the independent privacy check. Needs ``pip install sherpa-onnx``.
+With ``--asr-turbo`` it also fetches Whisper large-v3-turbo (int8, ~1 GB
+download), the stronger attacker of Step 22c (``attack_stronger_asr``), and with
+``--asr-parakeet`` NVIDIA Parakeet TDT 0.6B v3 (CC-BY-4.0; int8, ~0.5 GB), the
+non-Whisper attacker of Step 25.
 
 With ``--detector`` it fetches the VGGish weights (Google, Apache-2.0;
 PyTorch port from github.com/harritaylor/torchvggish releases, ~290 MB)
@@ -53,8 +57,12 @@ def fetch(url: str) -> bytes:
 
 def fetch_whisper(folder: str, prefix: str) -> None:
     """Download + unpack one sherpa-onnx Whisper export, keep only the int8 files."""
+    fetch_sherpa_dir(folder, {f"{prefix}-encoder.int8.onnx", f"{prefix}-decoder.int8.onnx", f"{prefix}-tokens.txt"})
+
+
+def fetch_sherpa_dir(folder: str, keep: set[str]) -> None:
+    """Download + unpack one sherpa-onnx release archive, keep only the listed files."""
     target = MODEL_DIR / folder
-    keep = {f"{prefix}-encoder.int8.onnx", f"{prefix}-decoder.int8.onnx", f"{prefix}-tokens.txt"}
     if all((target / k).exists() for k in keep):
         print(f"  {folder}/: ok")
         return
@@ -74,6 +82,8 @@ def fetch_whisper(folder: str, prefix: str) -> None:
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--asr", action="store_true", help="also fetch the Whisper models (~1 GB)")
+    p.add_argument("--asr-turbo", action="store_true", help="also fetch Whisper large-v3-turbo (~1 GB, Step 22c)")
+    p.add_argument("--asr-parakeet", action="store_true", help="also fetch Parakeet TDT 0.6B v3 (~0.5 GB, Step 25)")
     p.add_argument("--detector", action="store_true", help="also fetch the VGGish weights (~290 MB)")
     args = p.parse_args()
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
@@ -97,6 +107,11 @@ def main() -> None:
     if args.asr:
         for folder, prefix in WHISPER.items():
             fetch_whisper(folder, prefix)
+    if args.asr_turbo:
+        fetch_whisper("sherpa-onnx-whisper-turbo", "turbo")
+    if args.asr_parakeet:
+        fetch_sherpa_dir("sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8",
+                         {"encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"})
     print(f"Models in {MODEL_DIR}")
 
 

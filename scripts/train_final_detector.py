@@ -1,4 +1,13 @@
-"""Step 18a: train the deployable human detector on ALL participants and save it.
+"""Steps 18a and 25d: train the deployable human detector on ALL participants and save it.
+
+``--recipe v2`` (default since Step 25): Whisper small encoder (mean over the
+0.96 s window) + EfficientAT mn40 class scores, trained on human vs dog-only
+frames, thresholds at 3 / 6 / 10% of dog-only frames flagged (light /
+standard / strict) from the leave-one-participant-out predictions of the same
+recipe (``outputs/human_detector_whisper``, input ``wenc+eat``, objective
+``dog``). Output: ``models/human_detector_v2.npz``.
+
+``--recipe eat40`` is the Step 18 model described below.
 
 The recommended setup from Steps 16-17 (EfficientAT mn40 class scores of one
 microphone -> logistic regression -> 5-frame smoothing) is trained once on
@@ -27,19 +36,25 @@ from scripts.train_multimic_detector import OUT, roles
 from vad_anonymization.elte_barks import load_sessions
 
 MODEL_PATH = Path(__file__).resolve().parent.parent / "models" / "human_detector_eat40.npz"
+MODEL_V2 = Path(__file__).resolve().parent.parent / "models" / "human_detector_v2.npz"
+LEVELS_V2 = {"light": "c03", "standard": "c06", "strict": "c10"}
 # strictness -> share of dog-only frames flagged (LOPO), see README Step 17
 LEVELS = {"light": "0.06", "standard": "0.1", "strict": "0.15"}
 
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--recipe", choices=["v2", "eat40"], default="v2")
     p.add_argument("--data-root", type=Path, default=PROJECT_ROOT / "data" / "elte_barks")
     p.add_argument("--features", default="efficientat_mn40")
     p.add_argument("--lopo-dir", type=Path, default=OUT / "human_detector_micfusion_eat40_logits")
     p.add_argument("--C", type=float, default=0.05)
     p.add_argument("--exclude", nargs="*", default=[], help="participants to leave out (to test the saved model on them)")
-    p.add_argument("--output", type=Path, default=MODEL_PATH)
+    p.add_argument("--output", type=Path, default=None)
     args = p.parse_args()
+    if args.recipe == "v2":
+        return train_v2(args)
+    args.output = args.output or MODEL_PATH
 
     from sklearn.linear_model import LogisticRegression
     from sklearn.preprocessing import StandardScaler
@@ -65,6 +80,38 @@ def main() -> None:
              trained_on=np.array(f"ELTE BARKS play sessions, {len({x.name[:4] for x in sessions})} participants, "
                                  f"{int(use.sum())} frames"))
     print(f"saved {args.output}: thresholds {dict(zip(LEVELS, [round(th[LEVELS[k]], 3) for k in LEVELS]))}")
+
+
+def train_v2(args) -> None:
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.preprocessing import StandardScaler
+
+    from scripts.train_whisper_detector import pool_whisper
+
+    Xs, hs, ds = [], [], []
+    sessions = [s for s in load_sessions(args.data_root) if s.name[:4] not in args.exclude]
+    for sess in sessions:
+        c = np.load(OUT / "human_detector" / "features" / f"{sess.name}.npz")["centres"]
+        eat = np.load(OUT / "efficientat_mn40" / f"{sess.name}_{roles(sess.name)[0]}.npz")["logits"].astype(np.float32)[: len(c)]
+        c = c[: len(eat)]
+        Xs.append(np.hstack([pool_whisper(sess.name, c), eat]))
+        hs.append(overlap_share(c, sess.human, HOP_S / 2))
+        ds.append(overlap_share(c, sess.dog, HOP_S / 2))
+    X, h, d = np.vstack(Xs), np.concatenate(hs), np.concatenate(ds)
+    use = (h >= 0.5) | ((h == 0) & (d >= 0.5))                    # human vs dog-only (Step 23 objective)
+    scaler = StandardScaler().fit(X[use])
+    clf = LogisticRegression(C=args.C, class_weight="balanced", max_iter=3000).fit(scaler.transform(X[use]), h[use] >= 0.5)
+    th = json.loads((OUT / "human_detector_whisper" / "thresholds.json").read_text())["wenc+eat_dog"]
+    out = args.output or MODEL_V2
+    out.parent.mkdir(parents=True, exist_ok=True)
+    np.savez(out, mean=scaler.mean_.astype(np.float32), scale=scaler.scale_.astype(np.float32),
+             coef=clf.coef_[0].astype(np.float32), intercept=np.float32(clf.intercept_[0]),
+             levels=np.array(list(LEVELS_V2)), thresholds=np.array([th[LEVELS_V2[k]] for k in LEVELS_V2], np.float32),
+             smooth=np.int32(5), hop_s=np.float32(HOP_S), efficientat_model=np.array("mn40_as"),
+             features=np.array("whisper_small+mn40_as"),
+             trained_on=np.array(f"ELTE BARKS play sessions, {len({x.name[:4] for x in sessions})} participants, "
+                                 f"{int(use.sum())} frames (human vs dog-only)"))
+    print(f"saved {out}: thresholds {dict(zip(LEVELS_V2, [round(th[LEVELS_V2[k]], 3) for k in LEVELS_V2]))}")
 
 
 if __name__ == "__main__":
