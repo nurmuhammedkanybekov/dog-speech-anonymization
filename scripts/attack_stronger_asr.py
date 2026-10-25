@@ -70,7 +70,7 @@ def main() -> None:
     (out / "sessions").mkdir(parents=True, exist_ok=True)
     sessions = load_sessions(PROJECT_ROOT / "data" / "elte_barks")
     cfg = {}
-    for f in ("configs_v16.json", "configs_v17.json", "configs_v23.json", "configs_v25.json", "configs_v25_fine.json"):
+    for f in ("configs_v16.json", "configs_v17.json", "configs_v23.json", "configs_v25.json", "configs_v25_fine.json", "configs_v26.json"):
         if (OUT / f).exists():
             cfg.update(json.loads((OUT / f).read_text()))
     CONFIGS[:] = CONFIGS + [c for c in args.configs if c not in CONFIGS]

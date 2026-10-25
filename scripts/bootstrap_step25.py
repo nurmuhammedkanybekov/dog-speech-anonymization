@@ -20,7 +20,10 @@ from scripts.compare_detectors_pipeline import OUT, load_sessions_json
 
 PAIRS = [("eat40_1_mute_c10", "wenc_eat_dog_mute_c06"),   # old standard vs new standard
          ("eat40_1_mute_c06", "wenc_eat_dog_mute_c03"),   # old light vs new light
-         ("eat40_1_mute_c15", "wenc_eat_dog_mute_c10")]   # old strict vs new strict
+         ("eat40_1_mute_c15", "wenc_eat_dog_mute_c10"),   # old strict vs new strict
+         ("eat40_1_mute_c10", "barkw10_mute_c06"),        # Step 26 (v3) vs the old default
+         ("eat40_1_mute_c06", "barkw10_mute_c03"),
+         ("eat40_1_mute_c15", "barkw10_mute_c10")]
 
 
 def per_participant(sessions, name):

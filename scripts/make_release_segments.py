@@ -1,6 +1,6 @@
 """Steps 24a / 25e: what to mute in every play session, for an anonymized release of the dataset.
 
-Runs the deployable detector (since Step 25 ``models/human_detector_v2.npz``,
+Runs the deployable detector (since Step 26 ``models/human_detector_v3.npz``,
 Whisper encoder + EfficientAT, trained on all 17 participants; ``--model
 models/human_detector_eat40.npz --release release_v1`` for the Step 24 version)
 on all 30 play sessions and writes, per
@@ -18,7 +18,7 @@ The muting itself is applied to the original 48 kHz files by
 runs on any laptop.
 
 Usage (from inside speech_anonymization/):
-    python -m scripts.make_release_segments          # -> outputs/release_v2/{light,standard,strict}/<session>.csv + report.csv
+    python -m scripts.make_release_segments          # -> outputs/release_v3/{light,standard,strict}/<session>.csv + report.csv
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ import torch
 
 from scripts.anonymize_recording import EAT_DIR, flagged_segments, human_probability
 from scripts.extract_efficientat import load_model
-from scripts.train_final_detector import MODEL_V2
+from scripts.train_final_detector import MODEL_V3
 from vad_anonymization.audio_io import load_audio
 from vad_anonymization.elte_barks import load_sessions
 
@@ -51,8 +51,8 @@ def covered(segs, a: float, b: float) -> float:
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--model", type=Path, default=MODEL_V2)
-    p.add_argument("--release", default="release_v2", help="folder name under outputs/")
+    p.add_argument("--model", type=Path, default=MODEL_V3)
+    p.add_argument("--release", default="release_v3", help="folder name under outputs/")
     args = p.parse_args()
     OUT = OUTPUTS / args.release
     torch.set_num_threads(2)

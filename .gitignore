@@ -14,3 +14,13 @@ models/
 *.onnx
 *.pth
 _to_delete/
+
+# LaTeX build files (paper/main.pdf is kept)
+paper/*.aux
+paper/*.bbl
+paper/*.blg
+paper/*.fdb_latexmk
+paper/*.fls
+paper/*.log
+paper/*.out
+paper/*.tmp

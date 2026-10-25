@@ -14,6 +14,11 @@ download), the stronger attacker of Step 22c (``attack_stronger_asr``), and with
 ``--asr-parakeet`` NVIDIA Parakeet TDT 0.6B v3 (CC-BY-4.0; int8, ~0.5 GB), the
 non-Whisper attacker of Step 25.
 
+With ``--tts`` it fetches the text-to-speech voices of Step 28 (sherpa-onnx
+releases on GitHub; ~0.5 GB): Piper Hungarian anna / berta / imre (medium),
+Piper en_US LibriTTS-R (904 speakers) and VITS VCTK (109 speakers), into
+``models/tts/``.
+
 With ``--detector`` it fetches the VGGish weights (Google, Apache-2.0;
 PyTorch port from github.com/harritaylor/torchvggish releases, ~290 MB)
 used by the trained human-sound detector (``train_human_detector``).
@@ -47,6 +52,9 @@ VGGISH = {
     "vggish/vggish-10086976.pth": "https://github.com/harritaylor/torchvggish/releases/download/v0.1/vggish-10086976.pth",
 }
 WHISPER = {"sherpa-onnx-whisper-small.en": "small.en", "sherpa-onnx-whisper-small": "small"}
+SHERPA_TTS = "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/{name}.tar.bz2"
+TTS_VOICES = ("vits-piper-hu_HU-anna-medium", "vits-piper-hu_HU-berta-medium", "vits-piper-hu_HU-imre-medium",
+              "vits-piper-en_US-libritts_r-medium", "vits-vctk")
 DFN3_ZIP = "https://raw.githubusercontent.com/Rikorose/DeepFilterNet/main/models/DeepFilterNet3.zip"
 
 
@@ -79,11 +87,29 @@ def fetch_sherpa_dir(folder: str, keep: set[str]) -> None:
     print(f"  {folder}/: ok")
 
 
+def fetch_tts(name: str) -> None:
+    """Download + unpack one sherpa-onnx TTS voice into models/tts/<name>/ (whole archive)."""
+    target = MODEL_DIR / "tts"
+    if (target / name / "tokens.txt").exists():
+        print(f"  tts/{name}/: ok")
+        return
+    target.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryFile() as tmp:
+        with urllib.request.urlopen(SHERPA_TTS.format(name=name), timeout=600) as resp:
+            while chunk := resp.read(1 << 20):
+                tmp.write(chunk)
+        tmp.seek(0)
+        with tarfile.open(fileobj=tmp, mode="r:bz2") as tar:
+            tar.extractall(target, filter="data")
+    print(f"  tts/{name}/: ok")
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--asr", action="store_true", help="also fetch the Whisper models (~1 GB)")
     p.add_argument("--asr-turbo", action="store_true", help="also fetch Whisper large-v3-turbo (~1 GB, Step 22c)")
     p.add_argument("--asr-parakeet", action="store_true", help="also fetch Parakeet TDT 0.6B v3 (~0.5 GB, Step 25)")
+    p.add_argument("--tts", action="store_true", help="also fetch the Step 28 text-to-speech voices (~0.5 GB)")
     p.add_argument("--detector", action="store_true", help="also fetch the VGGish weights (~290 MB)")
     args = p.parse_args()
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
@@ -112,6 +138,9 @@ def main() -> None:
     if args.asr_parakeet:
         fetch_sherpa_dir("sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8",
                          {"encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt"})
+    if args.tts:
+        for name in TTS_VOICES:
+            fetch_tts(name)
     print(f"Models in {MODEL_DIR}")
 
 

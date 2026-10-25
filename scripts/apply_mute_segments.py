@@ -14,7 +14,7 @@ sample outside the muted intervals matches the original exactly.
 
 Usage (from inside speech_anonymization/):
     python -m scripts.apply_mute_segments --level standard
-        # -> ../data/elte_barks/anonymized_v2/standard/<session>.wav + MANIFEST.csv
+        # -> ../data/elte_barks/anonymized_v3/standard/<session>.wav + MANIFEST.csv
 """
 
 from __future__ import annotations
@@ -58,7 +58,7 @@ def decode(path: Path, raw_fmt: str, dtype, channels: int) -> np.ndarray:
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--level", default="standard", choices=["light", "standard", "strict"])
-    p.add_argument("--release", default="release_v2", help="release_v2 (Step 25, default) or release_v1 (Step 24)")
+    p.add_argument("--release", default="release_v3", help="release_v3 (Step 26, default), release_v2 (Step 25) or release_v1 (Step 24)")
     p.add_argument("--segments-dir", type=Path, default=None)
     p.add_argument("--data-root", type=Path, default=PROJECT_ROOT / "data" / "elte_barks")
     p.add_argument("--output-dir", type=Path, default=None)

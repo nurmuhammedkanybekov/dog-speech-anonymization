@@ -16,7 +16,7 @@
 \title{Keeping the Dog, Muting the Human:\\ Speech Removal for Dog--Human Play Recordings}
 \author{Nurmuhammed Kanybekov \quad Péter Kovács\\
 \small Faculty of Informatics, Eötvös Loránd University (ELTE), Budapest, Hungary\\
-\small \todo{draft of 22 October 2026 -- not for distribution; author list and order to be confirmed}}
+\small \todo{draft of 23 October 2026 -- not for distribution; author list and order to be confirmed}}
 \date{}
 
 \begin{document}
@@ -24,22 +24,25 @@
 
 \begin{abstract}
 Recordings of dogs playing with people contain the people's speech, which must be removed before the
-recordings can be shared, while the dog vocalizations are the data. We study detect-and-mute
-anonymization on 125 minutes of annotated dog--human social play recorded at the ELTE BARKS Lab
-(30 sessions, 17 dogs, 581 human sound events, 2{,}055 dog vocalizations). Privacy is measured by
-speech recognizers acting as attackers, from two model families (Whisper small and large-v3-turbo,
-and NVIDIA Parakeet), and the cost by the dog vocalizations that are muted, overall and per call type.
-Every model is evaluated on dogs it never saw. A frame classifier on the frozen Whisper
-encoder combined with AudioSet class scores, trained to separate human sounds from dog vocalizations
-rather than from everything else, finds 84\% of the human sound frames at a cost of 6\% of the dog
-frames, against 72\% for the previous AudioSet-only detector (74\% for the best AudioSet-only variant).
-End to end, Whisper small reads two or more words in 1.0\% of the human events afterwards (unprocessed:
-19.8\%; background noise alone: 1.0\%), while 8.0\% of the dog-only vocalization time is muted: a third
-less dog sound than with the previous detector (95\% CI of the reduction: 21--51\%), with no significant
-change in privacy for any of the three attackers. Speech enhancement instead of muting, three-microphone fusion and 20\,ms
-decisions did not help. On synthetic scenes with unseen speakers, dogs and rooms, it leaves no utterance readable at the standard
-setting, as muting the exact utterances does, at a higher dog cost (57\% vs 47\% of the dog-only time).
-We release the code and a one-command anonymizer.
+recordings can be shared, while the dog vocalizations are the data. We study anonymization on 125
+minutes of annotated dog--human social play recorded at the ELTE BARKS Lab (30 sessions, 17 dogs, 581
+human sound events, 2{,}055 dog vocalizations). Privacy is measured by speech recognizers from two model
+families acting as attackers (Whisper small and large-v3-turbo, NVIDIA Parakeet), and the cost by the dog
+vocalizations lost, overall and per call type; every model is evaluated on dogs it never saw. Three
+results. (1) A frame classifier on the frozen Whisper encoder and AudioSet class scores, trained to
+separate human sounds from dog vocalizations, finds 84\% of the human sound frames at a cost of 6\% of
+the dog frames (82\% with the call-type weights below), against 72\% for an AudioSet-only detector; muting its detections leaves 1.0\% of the
+human events readable (unprocessed: 19.8\%; background noise alone: 1.0\%) and loses a third less dog
+sound (95\% CI 21--51\%). (2) Weighting every dog call type equally in training keeps all 48 barks and
+92\% of the grunts intact (previously 75\% and 66\%) at the same privacy. (3) Dog sounds under speech,
+which muting always loses, can be partly kept: a dog extractor conditioned on Whisper's encoder, used only
+where a router hears a dog call, returns a fifth of the muted dog sound with no measurable change in
+privacy for any of the three attackers, and a third with a small privacy cost; the share of dog sound lost
+falls from 16.4\% to 9.8\% (8.2\%). Adding steady noise with the recording's own room tone, 10\,dB above it,
+where the router hears no dog lets the extractor's output fill \emph{all} the muted time: no dog sound is
+silenced, and three attackers, including one that first removes the noise, read back no new words (only
+laughter and backchannels); quiet calls come back at about the level of the added noise. We release the
+code and a one-command anonymizer.
 \end{abstract}
 
 \section{Introduction}
@@ -59,23 +62,28 @@ a play pant is a breathy, forced exhalation \cite{simonet2005laughter}, not unli
 Second, the relevant cost is not generic false alarms but dog sound lost, so the detector should be
 judged at a fixed loss of dog vocalizations, not at a fixed false-positive rate on all audio.
 
-This paper makes three contributions. (i) An evaluation protocol for this setting: leave-one-dog-out
+This paper makes five contributions. (i) An evaluation protocol for this setting: leave-one-dog-out
 cross-validation, privacy measured by speech recognizers from two model families acting as attackers,
 and the cost measured as dog vocalization time and dog call events lost, per call type
 (Section~\ref{sec:eval}). (ii) A detector that combines a frozen speech encoder (Whisper
 \cite{radford2023whisper}) with AudioSet class scores \cite{schmid2023efficientat} and is trained on
 the trade-off that matters, human sounds against dog vocalizations (Section~\ref{sec:method}). It mutes
-about as much speech as the previous AudioSet-only detector with a third less dog sound lost
-(Section~\ref{sec:results}). (iii) A set of negative results that narrow the design space: subtracting
-an estimate of the speech instead of muting it, fusing three microphones, and deciding every 20\,ms
-instead of every 0.24\,s all failed to improve the trade-off.
+about as much speech as an AudioSet-only detector with a third less dog sound lost
+(Section~\ref{sec:results}). (iii) Call-type-balanced training, which protects the rare calls (barks,
+whines, moans) without any privacy cost. (iv) A way to keep part of the dog sound that overlaps speech:
+a Whisper-conditioned dog extractor, applied only where a dog router hears a dog call
+(Section~\ref{sec:keep}). (v) Negative results that narrow the design space: subtracting a speech
+estimate, fusing three microphones for detection, deciding every 20\,ms, and dog extractors trained from
+the spectrogram alone.
 
 \section{Data}
 \label{sec:data}
 The recordings were made at the ELTE BARKS Lab in Budapest between March and May 2025, during
 dog--human social play in a laboratory room: 30 sessions of 17 dogs with their human play partners,
 124.7 minutes in total, recorded at 48\,kHz with a shotgun (27 sessions) or cardioid microphone.
-Up to two further microphones recorded in parallel (Section~\ref{sec:negative}). Expert annotators
+Up to two further microphones recorded in parallel; one of them, a wireless clip-on, is on the dog
+(pants are about 8\,dB relatively louder on it than on the room microphone, human sounds about 4.5\,dB, in
+25 of 30 sessions). Expert annotators
 marked 581 human sound events (788\,s; speech, laughter, claps and other human sounds) and 2{,}055 dog
 vocalizations of ten types. Panting dominates: 1{,}294 pants make up 3{,}521\,s of the 3{,}966\,s of
 annotated dog sound (89\%). The other types are rarer: 198 growls, 163 grunts, 48 barks or yelps,
@@ -104,6 +112,12 @@ inputs) is trained on frames that are at least half covered by a human event (po
 with no human sound that are at least half covered by a dog vocalization (negative). Frames with neither
 are left out of training: muting background costs nothing the lab analyses, so the classifier should not
 spend capacity on it. The output is smoothed over 5 frames ($\pm$0.48\,s).
+
+\textbf{Call-type weights.} Panting is 89\% of the dog time, and only three dogs bark (21, 18 and 7
+barks). A model trained without one of them has seen barks of only two other dogs and treats an unfamiliar
+bark as ``not a pant'', i.e.\ possibly a voice. Each dog-only training frame is therefore weighted by
+$(N/N_t)^{\alpha}$, where $N$ is the number of dog-only frames and $N_t$ that of its call type, and the
+dog-only frames keep their total weight. With $\alpha=1$ every call type weighs the same.
 
 \textbf{Thresholds and muting.} Thresholds are set where a fixed share $q$ of the dog-only frames is
 flagged (3, 6, 10 or 15\%; the levels \emph{light}, \emph{standard} and \emph{strict} use 3, 6 and
@@ -216,20 +230,22 @@ privacy for an attacker that shares nothing with the detector.
 
 \begin{table}[t]
 \centering\small
-\caption{Dog calls with no human sound on them that stay fully intact, previous vs new standard setting
-(\%). Leave-one-dog-out.}
+\caption{Dog calls with no human sound on them that stay fully intact at the standard setting (\%):
+AudioSet-only detector (10\% of dog frames), Whisper+mn40 (6\%), and with call-type weights (6\%).
+Leave-one-dog-out.}
 \label{tab:calls}
-\begin{tabular}{@{}lrcc@{}}
+\begin{tabular}{@{}lrccc@{}}
 \toprule
-call type & events & mn40, 10\% & Whisper+mn40, 6\%\\
+call type & events & mn40 & W+mn40 & + weights\\
 \midrule
-pant & 1{,}116 & 71 & \textbf{82}\\
-other & 243 & 75 & \textbf{83}\\
-growl & 188 & 90 & \textbf{96}\\
-grunt & 159 & 66 & \textbf{84}\\
-bark/yelp & 48 & \textbf{75} & 67\\
-moan & 32 & 62 & \textbf{75}\\
-whine & 7 & 14 & \textbf{29}\\
+pant & 1{,}116 & 71 & \textbf{82} & \textbf{82}\\
+other & 243 & 75 & 83 & \textbf{87}\\
+growl & 188 & 90 & 96 & \textbf{98}\\
+grunt & 159 & 66 & 84 & \textbf{92}\\
+bark/yelp & 48 & 75 & 67 & \textbf{100}\\
+moan & 32 & 62 & 75 & \textbf{100}\\
+sneeze & 24 & \textbf{92} & 83 & 88\\
+whine & 7 & 14 & 29 & \textbf{71}\\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -238,7 +254,10 @@ whine & 7 & 14 & \textbf{29}\\
 panting number. Table~\ref{tab:calls} counts calls instead. The new detector leaves more calls intact
 for most types: 82\% of the play pants (previously 71\%), 84\% of the grunts (66\%). Barks are the main
 exception (67\% vs 75\%, 48 events): the speech encoder appears to respond to the harmonic, voice-like
-bark; sneezes also lose (83\% vs 92\%, 24 events). Whines (7 events) are mostly taken for a human voice by both detectors.
+bark; sneezes also lose (83\% vs 92\%, 24 events). All 16 barks it muted came from one dog.
+Call-type weights (last column) fix this: every call type keeps as many or more calls than with both
+earlier detectors, except one sneeze, and privacy does not change (Whisper small: 1.0\% readable, 5.2\%
+of the words; Parakeet reads back 7.9\% of its words instead of 9.2\%). This model is the default.
 
 \textbf{Whole recordings.} The privacy numbers cover the annotated human events. To check for speech
 the annotators did not mark, Whisper read all 8\,s windows with no annotated human sound within 0.5\,s
@@ -259,6 +278,102 @@ AudioSet detector and 47\% for the exact utterances, because foreign barks overl
 hard to tell from it. An earlier attempt to reach this privacy by training the AudioSet detector on
 synthetic speech-under-bark scenes needed 63--77\% dog loss.
 
+\section{Keeping the dog under speech}
+\label{sec:keep}
+227\,s of dog sound lies under a human sound (223 calls, 178 of them pants); the standard setting mutes
+184\,s of it. With the detector's false alarms it mutes 12.1\% of all dog sound, about 40\% of it under a
+person.
+
+\textbf{Dog extractor.} A network predicts a time--frequency mask $M\in[0,1]$ on the 16\,kHz
+spectrogram (512-point STFT, 16\,ms hop) that keeps the dog: three convolution layers on the log power,
+concatenated per frame with the Whisper encoder frames of the same audio (projected to 128 values), a
+two-layer bidirectional GRU and a sigmoid output (1.2M parameters). It is trained to regress a
+privacy-weighted Wiener mask, $|D|^2/(|D|^2+10\,|S|^2)$, with $D$ the dog and background and $S$ the human
+sound, on mixtures of the lab's own audio: 4\,s windows with dog calls and no person, plus real
+human-only events from the same participant group (30\% LibriSpeech speech in simulated lab rooms),
+3{,}000 per group. Two folds split the participants (odd/even numbers); each session is processed by the
+model of the other fold. On held-out mixtures it removes 6--12\,dB of the human sound while turning the
+dog down by only 0.6--3.7\,dB (dog SI-SDR 9--15\,dB); the folds differ, with the remaining speech
+20--22\,dB below the dog in one and only 2--4\,dB in the other. The same network without the Whisper frames removed
+only 4--6\,dB: with $\sim$150 real human events per fold it learns the training voices, not speech.
+
+\textbf{Where to use it.} Inside the muted time of the real sessions, replacing silence by the extractor's
+output everywhere brings speech back (Whisper small: 2.8\% of the events readable instead of 0.9\%;
+Parakeet reads back 16.9\% of its words instead of 7.9\%). Using it only inside the annotated dog calls
+(an oracle) keeps privacy close to muting (1.2\% and 12.5\%): where the dog vocalizes, it covers what is
+left of the speech. A \emph{router} therefore decides where a dog is calling: the human detector's
+features, trained on frames with vs without a dog call (frames with a person weighted 5$\times$),
+leave-one-dog-out. Inside human frames it separates dog+person from person-only with AUC 0.78 (0.81 with
+the clip-on microphone cues). Its threshold is the share of person-only frames it lets through.
+
+\begin{table}[t]
+\centering\small
+\caption{Keeping the dog inside the muted time (standard setting, mask $M^3$). Words read back by Whisper
+small / Parakeet / turbo (\%), and the share of muted dog time that comes back: dog calls under a person,
+and dog-only calls the detector flagged. Last column: all dog time muted. Tone: room tone 10\,dB above the room's own;
+\emph{all}: extractor everywhere, tone where the 5\% router hears no dog. $^*$Nothing is muted, but
+quiet calls lie near the level of the added tone.}
+\label{tab:keep}
+\setlength\tabcolsep{4pt}
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+inside muted time & S / P / T & under & flagged & lost\\
+\midrule
+silence & 4.4 / 7.9 / 17.0 & 0 & 0 & 12.1\\
+extractor everywhere & 5.8 / 16.9 / -- & 100 & 100 & --\\
+\midrule
+router 2\% (safe) & 4.4 / 7.9 / 17.9 & 18 & 19 & \textbf{9.8}\\
+router 5\% (more) & 4.4 / 10.4 / 18.0 & 32 & 31 & \textbf{8.2}\\
++ mics, 10\% & 4.4 / 11.7 / -- & 52 & 49 & 6.0\\
+\midrule
+everywhere + tone & 4.4 / 11.3 / 17.6 & 100 & 100 & 0$^*$\\
+\emph{all} & 4.4 / 13.8 / 18.4 & 100 & 100 & \textbf{0}$^*$\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Result.} Table~\ref{tab:keep}: with 2\% of person-only frames let through, Whisper small reads
+exactly the same events and words as after muting, Parakeet reads back the same share of words (4 events
+become readable, 6 stop being readable), and turbo reads back 17.9\% instead of 17.0\% of its words (the
+gained words are fillers such as ``you'', ``so''); a fifth of the muted dog sound comes back and the share
+of all dog sound lost falls from 12.1\% to 9.8\% (16.4\% for the AudioSet-only detector). At 5\%, a third
+comes back (8.2\% lost); Whisper small reads the same words, Parakeet 10.4\% instead of 7.9\% (mostly
+laughter), and turbo reads one short phrase in full that muting removes. With 5--54 readable events per
+attacker, ``no measurable change'' is not a proof of equal privacy. The table's ``silence'' row comes from
+its own transcription run and differs slightly from Table~\ref{tab:e2e}. With the clip-on microphone cues
+the router lets more dog through at the same rate (38\% of the dog under a person at 5\%). The kept dog is
+the extractor's output: 16\,kHz, a few dB quieter, with the speech removed (Figure~\ref{fig:example}). The
+mask exponent 3 was chosen after exponent 1 had been scored on the same events (exponent 1, router 2\%:
+Parakeet reads back 10.6\% of its words), so this setting is slightly optimistic; the router's threshold
+is an average, and per participant the safe setting lets through 0--15\% of the person-only frames.
+
+\textbf{Room tone.} Why does the extractor's output bring speech back when used everywhere? On clean
+unseen voices it removes 14\,dB of the speech (20\,dB with $M^3$), but the attackers normalize the level
+before reading, and in the quiet lab the leftover voice is still the loudest thing in the output: person-only
+speech is about 15\,dB above the room tone, the extractor's output during it 4--6\,dB. We therefore add,
+inside the processed time, stationary noise with the spectrum of the recording's own room tone (the
+quietest 20\% of the frames outside the processed time), 10\,dB above it. With the extractor everywhere,
+Whisper small reads back the same words as after muting and Parakeet 11.3\% (7.9\%); an adaptive attacker
+that first enhances the audio with DeepFilterNet3 \cite{schroeter2023deepfilternet3} before Parakeet reads
+15.6\% (10.0\% after muting). The extra events contain laughter, ``mm-hmm'' and ``thank you''---no new
+words; turbo reads 17.6\% (17.0\%). Adding the noise only where the router hears no dog (``all'') keeps
+the routed dog clean: Parakeet reads back 13.8\% ($+$5.8 points, 95\% CI 1.9--11.8 over participants, all
+laughter, backchannels and ``thank you''), DeepFilterNet+Parakeet 16.1\%, turbo 18.4\% ($+$1.4, CI
+$-$0.4--3.3; six events gain words, against four with the router alone). No dog time is muted; of the
+432 annotated calls in the processed time, 34\% are 6\,dB or more above the added noise and 11\% get no
+noise, but pants, the quietest calls (13\,dB above the room tone), come back at about the noise level
+(median within 1\,dB). A noise level that follows the power the extractor removed kept the dog more audible
+but let turbo read 5.5 points more, and was dropped.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{figures/example_clip.png}
+\caption{A pant under speech from a dog and person the models never heard: original, muted, dog kept
+where the router (5\%) hears a dog, and the extractor's output everywhere with room tone where the router
+hears no dog. Blue: annotated human sound; red: annotated dog call.}
+\label{fig:example}
+\end{figure}
+
 \section{What did not help}
 \label{sec:negative}
 \begin{itemize}\setlength\itemsep{1pt}
@@ -272,6 +387,14 @@ suggested finer boundaries. A classifier on every 20\,ms Whisper frame (with $\p
 context, trained against all other frames) muted 68\% of the human time at 3.6\% dog loss, against 73\%
 at 4.5\% for the 0.24\,s detector with the same input and objective (77\% at 7.1\% vs 81\% at 7.9\%);
 interpolating the 0.24\,s probabilities to 20\,ms with tighter padding changed nothing.
+\item \emph{Dog extractors from the spectrogram alone.} A privacy-weighted signal loss removed 19\,dB of
+speech but also turned the dog down by 9\,dB; mask regression on the spectrogram (and with the clip-on
+microphone's level difference) removed only 4--6\,dB of held-out speech.
+\item \emph{Better extractors and routers.} 780 synthetic voices (Piper and VITS text-to-speech,
+Hungarian and English, split by speaker between the folds), a loss on the leaked speech in dB, and a
+U-Net-style frequency decoder each moved the extractor along the same speech-vs-dog trade-off (the
+privacy-weighted target mask itself would remove 31\,dB). Describing the extractor's output with the
+detector's networks did not make the router better (AUC 0.74--0.80).
 \item \emph{Other inputs and labels.} Training on speech-only labels (events where Whisper reads words)
 instead of all human sounds, normalizing the scores per recording, adding neighbouring frames or the
 standard deviation of the Whisper frames were all equal or worse. Subtracting a separate dog detector's
@@ -286,20 +409,24 @@ runs at about 8$\times$ real time on two CPU cores.
 
 The evaluation has limits. All real data come from one lab, one room and one kind of interaction; the
 synthetic out-of-domain test covers other speakers, dogs and rooms only in simulation. Privacy is
-measured by automatic recognizers on the annotated events; a human listening test of the remaining
-readable events is still to be done. The threshold fixes the dog cost on average: at the 6\% setting
+measured by automatic recognizers on the annotated events; a human listening test, of the remaining
+readable events and of the kept dog sound under speech, is still to be done (a pack of 12 clips is
+prepared). The threshold fixes the dog cost on average: at the 6\% setting
 the share of dog-only frames flagged ranges from 0\% to 19\% between dogs. Handler identity is not in the
 metadata, so if one person played with several dogs, the split is disjoint in dogs but not in speakers.
 The inputs, objective and settings were chosen over several rounds on the same 17 folds, which makes the
-best configuration somewhat optimistic; the out-of-domain test is the guard against this. Barks are muted more often by the new detector, which matters for
-studies that focus on barking; the AudioSet-only detector remains available for them. Finally, muting
-removes the dog sounds that overlap speech (by design); keeping those would require separating the two,
-which did not work well enough here.
+best configuration somewhat optimistic; the out-of-domain test is the guard against this. The kept dog sound under speech is a processed signal
+at 16\,kHz, not the original recording, and the router finds only a third to a half of it at an
+acceptable privacy cost; with room tone all of it comes back, but quiet calls under a noise floor. The extractor
+passes laughter.
 
 \section{Conclusion}
 For anonymizing dog--human play recordings, a frozen speech encoder combined with AudioSet class
-scores, trained on human versus dog sounds, reduces the readable speech to the level a recognizer
-reaches on background noise, while losing a third less dog vocalization than an AudioSet-only detector. The code, the evaluation and a
+scores, trained on human versus dog sounds with every call type weighted equally, reduces the readable
+speech to the level a recognizer reaches on background noise while losing a third less dog vocalization
+than an AudioSet-only detector, and a Whisper-conditioned dog extractor, gated by a dog router, brings back
+part of the dog sound under speech at no measurable privacy cost; with the recording's own room tone
+masking what is left of the voice, no dog sound needs to be silenced at all. The code, the evaluation and a
 one-command anonymizer that keeps the original file format are available at \todo{repository URL once
 public}.
 

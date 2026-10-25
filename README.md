@@ -6,43 +6,62 @@ speech in the lab's recordings so they can be anonymized before further
 use. 
 The other two tasks (Sound-source localization and Echo cancellation) both of them are out of scope for this sub-repository.
 
-## Current approach and results (22 October 2026)
+## Current approach and results (25 October 2026)
 
 The goal is to remove human speech from the recordings while keeping the
-dog vocalizations intact. The recommended pipeline (Step 25) needs no
-annotations at run time:
+dog vocalizations intact. The recommended pipeline needs no annotations at
+run time:
 
 1. **Detect human sounds** with two frozen networks: Whisper small's encoder
    (trained on 680,000 hours of speech) and EfficientAT `mn40_as` (527
    AudioSet sound classes). A logistic regression, trained on the lab's
-   expert annotations to tell human sounds from dog vocalizations, combines
-   them; its output is smoothed over 5 frames of 0.24 s.
+   expert annotations to tell human sounds from dog vocalizations, with every
+   dog call type weighted equally, combines them; its output is smoothed over
+   5 frames of 0.24 s (Steps 25-26).
 2. **Mute** the flagged time (±0.12 s) in the original file; everything else
-   stays bit-identical. Subtracting a speech estimate instead was never
-   better (Steps 12–16).
-3. **Check privacy independently** with three speech recognizers as
+   stays bit-identical.
+3. **Optionally keep the dog under speech** (`--keep-dog`, Steps 27-28): inside
+   the muted time, where a dog router hears a dog call, a dog extractor's
+   output (human sound removed) replaces the silence (`safe`, `more`); with
+   `all`, the extractor's output fills all the muted time and steady room
+   tone covers what is left of the voice where the router hears no dog.
+4. **Check privacy independently** with three speech recognizers as
    attackers: Whisper small, Whisper large-v3-turbo and NVIDIA Parakeet (a
-   different model family), on every annotated human event (Steps 8, 22, 25).
+   different model family), on every annotated human event.
 
 Results on the ELTE BARKS play sessions (581 human events, 17 dogs, every
 model tested on dogs it never saw; Whisper small as the attacker):
 
-| setting (`--strictness`) | human events with 2+ readable words | original words still readable | dog-only time lost | play pants untouched |
+| setting | human events with 2+ readable words | original words still readable | all dog sound muted | barks / play pants untouched |
 |---|---|---|---|---|
-| no processing | 19.8% | 100% | 0% | 100% |
-| previous default (Step 17, `standard`) | 1.4% | 5.6% | 12.5% | 71% |
-| `light` | 1.7% | 7.8% | 4.3% | 90% |
-| **`standard` (default)** | **1.0%** | 5.2% | **8.0%** | **82%** |
-| `strict` | 0.7% | 3.5% | 12.3% | 73% |
+| no processing | 19.8% | 100% | 0% | 100% / 100% |
+| previous default (Step 17, `standard`) | 1.4% | 5.6% | 16.4% | 75% / 71% |
+| **`standard` (default, Step 26)** | **1.0%** | 5.2% | 12.1% | **100% / 82%** |
+| `standard --keep-dog safe` (Step 27) | 1.0%* | 5.2%* | **9.8%** | 100% / 82% + part of the calls under speech |
+| `standard --keep-dog more` | 1.0%* | 5.2%* | 8.2% | |
+| `standard --keep-dog all` (Step 28) | 2.6%† | 5.2%* | **0%**† | every call in the muted time comes back, a third of them clearly above the added room tone |
+| `light` / `strict` | 1.7% / 1.0% | 6.2% / 4.3% | – | |
 
-- Whisper "reads" 2+ words in 1.0% of background-only windows: the
-  `standard` setting reaches that floor.
-- Compared with the previous default, a third less dog sound is lost (95% CI
-  of the reduction 21–51%, participant bootstrap) with no significant change
-  in privacy, for all three attackers. Barks are the one call type that loses
-  (67% vs 75% untouched); see Step 25.
+\* the same words read back as with muting for Whisper small; Parakeet and
+turbo read a few more (Steps 27-28: for `all`, laughter, "mm-hmm" and "thank
+you", no new words for Whisper small, Parakeet or a DeepFilterNet-cleaning
+attacker; turbo +1.4 points). `--keep-dog` stays off by default until a person
+has listened to the 12 clips in `outputs/listening_overlap/listen.html`.
+
+† with `all` nothing is muted, but the pants in the muted time (the quietest
+call type) come back at about the level of the added room tone (median within
+1 dB); louder calls stand out more. The 2.6% is from the Step 28 run, where
+muting gives 0.9% and room tone alone 1.4%: Whisper writes 2+ words for room
+tone more often than for silence, while the words it reads back from the
+original stay at muting's level.
+
+- Whisper "reads" 2+ words in 1.0% of background-only windows: `standard`
+  reaches that floor.
+- Compared with Step 17: a third less dog sound lost at the same privacy (95%
+  CI of the reduction 21–51%), all barks kept, and with `--keep-dog` part of
+  the dog sound under speech comes back.
 - On synthetic recordings with unseen speakers, unseen dogs and simulated
-  rooms (Steps 20–21), `standard` leaves 0 of 120 utterances readable.
+  rooms (Steps 20–21, 25), `standard` leaves 0 of 120 utterances readable.
 - Re-checks (Step 22): no unannotated speech outside the annotated events; a
   bigger attacker does not change the conclusions.
 
@@ -50,19 +69,22 @@ model tested on dogs it never saw; Whisper small as the attacker):
 and `python -m scripts.download_models --asr`):
 
 ```bash
-python -m scripts.anonymize_recording input.wav anonymized.wav --strictness standard
+python -m scripts.anonymize_recording input.wav anonymized.wav                      # standard
+python -m scripts.anonymize_recording input.wav anonymized.wav --keep-dog safe      # + dog under speech
+python -m scripts.anonymize_recording input.wav anonymized.wav --keep-dog all       # nothing muted (Step 28)
 ```
 
 The command runs at about 8x real time on 2 CPU cores and keeps the sample
-rate, channels and bit depth of the input. It needs the trained model
-`models/human_detector_v2.npz`, made by `python -m scripts.train_final_detector`.
-That model, and the anonymized copy of the dataset (`data/elte_barks/anonymized_v2/`,
-Steps 24–25), are kept out of git until the dataset question is settled.
-The Step 18 model (`--model models/human_detector_eat40.npz`) keeps more barks.
+rate, channels and bit depth of the input. It needs `models/human_detector_v3.npz`
+(`python -m scripts.train_final_detector`) and, for `--keep-dog`,
+`models/dog_router_v1.npz` and `models/dog_extractor/dog_extractor_w_all.pt`
+(Step 27). The models and the anonymized copies of the dataset
+(`data/elte_barks/anonymized_v3/`) are kept out of git until the dataset
+question is settled.
 
 A paper draft with these results is in `paper/` (`main.pdf`).
 
-Every step, with its commands and full results, is below (Steps 1–25). The
+Every step, with its commands and full results, is below (Steps 1–28). The
 early steps describe the approaches that were tried and replaced: Silero VAD,
 VGGish, hybrid removal with DTLN, and EfficientAT alone.
 
@@ -1471,6 +1493,353 @@ scored against the LibriSpeech reference text):
 *Speed:* `anonymize_recording` with v2 runs at about 8x real time on 2 CPU
 cores (235 s of audio in 28 s, model loading included), against about 19x for
 the EfficientAT-only model: an hour of audio takes about 8 minutes.
+
+**Step 26: every dog call type counts the same (barks fixed; new default `human_detector_v3.npz`)**
+
+```bash
+python -m scripts.train_calltype_detector --alpha 0.5 1.0      # leave one participant out, ~10 min each
+python -m scripts.run_pipeline_real --extra-configs outputs/configs_v26.json \
+       --configs barkw10_mute_c03 barkw10_mute_c06 barkw10_mute_c10 barkw10_mute_c15 --output-dir outputs/pipeline_real_v16
+python -m scripts.compare_detectors_pipeline
+python -m scripts.eval_dog_events
+python -m scripts.attack_stronger_asr --model parakeet --configs barkw10_mute_c03 barkw10_mute_c06 barkw10_mute_c10
+python -m scripts.train_final_detector                          # now --recipe v3: models/human_detector_v3.npz
+python -m scripts.make_release_segments                         # outputs/release_v3/
+python -m scripts.apply_mute_segments --level standard          # ../data/elte_barks/anonymized_v3/standard/
+```
+
+The Step 25 detector left fewer barks untouched than the old one (67% vs 75%).
+All 16 barks it muted came from one dog (P-03, 21 barks); the old model had kept 9 of them. Only three
+dogs bark in this dataset (P-03: 21, P-01: 18, P-13: 7), so when P-03 is left
+out the model has seen 25 barks (27 s) against 3,521 s of panting. It learns
+what a pant is and treats an unfamiliar bark as "not a pant", i.e. maybe a voice.
+
+The fix changes only the training weights: each dog-only frame is weighted
+by (all dog-only frames / frames of its call type)^alpha, and the dog-only
+frames keep their total weight. With alpha = 1 every call type weighs the same
+in total. Input, objective, thresholds rule and evaluation are unchanged.
+
+Dog calls left untouched (no human sound on them), at the standard setting:
+
+| call (events) | old (mn40, 10%) | Step 25 (6%) | **Step 26, alpha = 1 (6%)** |
+|---|---|---|---|
+| Pant (1,116) | 71% | 82% | **82%** |
+| Other (243) | 75% | 83% | **87%** |
+| Growl (188) | 90% | 96% | **98%** |
+| Grunt (159) | 66% | 84% | **92%** |
+| Bark/yelp (48) | 75% | 67% | **100%** |
+| Moan (32) | 62% | 75% | **100%** |
+| Sneeze (24) | 92% | 83% | 88% |
+| Whine (7) | 14% | 29% | **71%** |
+
+Privacy does not change (Whisper small; words = original words still readable):
+
+| setting | readable events | words | dog-only time lost | Parakeet: words read back |
+|---|---|---|---|---|
+| Step 25, light / standard / strict | 1.7 / 1.0 / 0.7% | 7.8 / 5.2 / 3.5% | 4.3 / 8.0 / 12.3% | 13.8 / 9.2 / 6.7% |
+| **Step 26, light / standard / strict** | 1.7 / 1.0 / 1.0% | 6.2 / 5.2 / 4.3% | 4.4 / 7.9 / 12.3% | **10.4 / 7.9 / 5.0%** |
+
+- The share of human frames found at 6% dog cost drops slightly (84.0% ->
+  81.8%), but the readable events stay the same and Parakeet reads back fewer
+  words at every level.
+- alpha = 0.5 lies in between (barks 88%, grunts 89%, recall 83.4%).
+- So the v3 model keeps as many or more calls of every type than both earlier
+  models, except sneezes, where the old model keeps one more (22 vs 21 of 24),
+  at the same privacy. It is the new default of `anonymize_recording`.
+
+*Anonymized copy v3* (in sample; the model saw these participants):
+
+| level | audio muted | human events mostly muted | pants | growls | grunts | barks | moans | whines intact |
+|---|---|---|---|---|---|---|---|---|
+| light | 17.0% | 444 / 581 | 1017 / 1116 | 188 / 188 | 158 / 159 | 48 / 48 | 32 / 32 | 6 / 7 |
+| standard | 22.6% | 514 / 581 | 910 / 1116 | 186 / 188 | 153 / 159 | 48 / 48 | 32 / 32 | 6 / 7 |
+| strict | 28.8% | 546 / 581 | 816 / 1116 | 185 / 188 | 146 / 159 | 47 / 48 | 32 / 32 | 6 / 7 |
+
+In sample, v3 keeps fewer pants than v2 (910 vs 952 at standard) and more of
+everything else; on unseen participants (above) both keep 82% of the pants.
+
+**Step 27: keeping the dog when a person talks over it (`--keep-dog`)**
+
+```bash
+# 27d: the dog extractor, conditioned on Whisper's encoder (two participant folds + the deployable model)
+python -m scripts.train_dog_extractor_w --build --group odd       # 3,000 mixtures of real lab audio (~30 min each)
+python -m scripts.train_dog_extractor_w --build --group even
+python -m scripts.train_dog_extractor_w --train-group odd         # model for the even participants (~70 min)
+python -m scripts.train_dog_extractor_w --train-group even
+python -m scripts.train_dog_extractor_w --train-group all --steps 5000   # deployable: models/dog_extractor/dog_extractor_w_all.pt
+python -m scripts.eval_extractor_synthetic                        # held-out mixtures, where the true dog is known
+# 27e: the dog router
+python -m scripts.train_dog_router --final                        # one microphone; + models/dog_router_v1.npz
+python -m scripts.train_dog_router --inputs wenc+eat+sp           # with the microphone cues
+# 27b: real sessions, two attackers (and turbo on the deployable versions)
+python -m scripts.eval_dog_extraction --config barkw10_mute_c06 --asr small parakeet --mask-power 3 \
+       --router outputs/human_detector_whisper/oof_dog_router_wenc_eat_w5.npz --router-name routed1mic --route-share 0.02 0.05
+python -m scripts.eval_dog_extraction --config barkw10_mute_c06 --asr small parakeet --mask-power 3 \
+       --router outputs/human_detector_whisper/oof_dog_router_wenc_eat_sp_w5.npz --route-share 0.02 0.05 0.1
+python -m scripts.make_listening_pack --n 12                       # outputs/listening_overlap/listen.html
+```
+
+**The problem.** 227 s of dog sound lies under a human sound: 223 of the 2,055
+annotated calls (178 of them pants). The standard setting mutes 184 s of it,
+and with the detector's false alarms 12.1% of all dog sound; about 40% of that
+is dog under a person.
+
+**What did not work (27a-c).** A mask network that predicts which
+time-frequency bins belong to the dog, trained on mixtures of the lab's own
+audio (real dog windows + real human-only events, participant folds):
+
+| model | speech left on held-out mixtures |
+|---|---|
+| spectrogram only, privacy-weighted signal loss | -19 dB, but the dog was turned down by 9 dB too |
+| spectrogram only, mask-regression loss | -5.5 dB (stopped after 1,000 steps: not improving) |
+| + level difference between the clip-on M1 (on the dog, see below) and the room mic | -4 to -5 dB (stopped after 1,000 steps) |
+| **+ Whisper encoder frames (27d)** | **-6 to -12 dB, dog turned down by only 0.6-3.7 dB** |
+
+With only ~150 real human events per participant group, a network learns the
+training voices, not speech in general. Whisper's encoder brings speech
+knowledge from 680,000 hours. (The clip-on M1 is on the dog: pants are 8 dB
+relatively louder on it, human sounds 4.5 dB, in 25 of 30 sessions.)
+
+On held-out mixtures, where the true dog is known, the Whisper-conditioned
+extractor keeps the dog with a median SI-SDR of 14-15 dB (9 dB with the more
+conservative mask power 3) and removes 6-12 dB of the speech
+(`outputs/dog_extraction/synthetic_heldout.json`).
+
+**The key finding (27b): extract only where there is a dog.** On the real
+sessions (each participant processed by an extractor trained on the other
+participant group), inside the time the v3 detector mutes at standard:
+
+| inside the muted time | Whisper small: readable / words | Parakeet: readable / words |
+|---|---|---|
+| silence (Step 26) | 0.9% / 4.4% | 3.3% / 7.9% |
+| extractor output everywhere | 2.8% / 5.8% | 6.7% / 16.9% |
+| extractor output only inside annotated dog calls (oracle) | 1.2% / 4.4% | 4.1% / 12.5% |
+
+Everywhere, the speech the extractor misses becomes readable again (on the real
+recordings the extractor removes only 4-9 dB of person-only sound). Inside
+dog calls the dog covers what is left. So the extractor needs a gate.
+
+**The router (27e).** A detector of dog calls that works while a person is
+talking: same features as the human detector (Whisper encoder + mn40), trained
+on frames with vs without a dog call, frames with a person weighted 5x, leave
+one participant out. Inside human frames it tells dog+person from person-only
+with AUC 0.78 (0.81 with the microphone cues). Its threshold is set by the
+share of person-only frames it lets through.
+
+**Result** (mask power 3; "dog kept" = share of the muted dog time that comes back):
+
+| version | Whisper small: readable / words | Parakeet: readable / words | dog under a person kept | dog false alarms kept | all dog time muted |
+|---|---|---|---|---|---|
+| Step 25-26, mute | 0.9% / 4.4% | 3.3% / 7.9% | 0% | 0% | 12.1% |
+| **`--keep-dog safe`** (1 mic, 2%) | **0.9% / 4.4%** | **2.9% / 7.9%** | 18% | 19% | **9.8%** |
+| **`--keep-dog more`** (1 mic, 5%) | 1.0% / 4.4% | 3.4% / 10.4% | 32% | 31% | **8.2%** |
+| 3 mics, 2% | 0.9% / 4.4% | 3.1% / 7.9% | 19% | 17% | 9.9% |
+| 3 mics, 5% | 1.2% / 4.4% | 3.8% / 10.4% | 38% | 34% | 7.8% |
+| 3 mics, 10% | 1.4% / 4.4% | 4.3% / 11.7% | 52% | 49% | 6.0% |
+
+- `safe` brings back a fifth of the muted dog sound with no measurable change
+  in privacy: Whisper small reads exactly the same events and words; Parakeet
+  reads the same share of words (4 events become readable, 6 stop being
+  readable); Whisper turbo reads back 17.9% instead of 17.0% of its words
+  (9 vs 8 readable events changing; the gained words are "you", "so", "oh").
+  On the 35 events where the attackers agree on clear speech, 2 leak instead of 1.
+- `more` brings back a third; Whisper small reads the same words, Parakeet
+  10.4% instead of 7.9% (extra words: laughter "ha ha ha"), turbo 18.0%; turbo
+  reads one short phrase in full that muting removes. Use `safe` when in doubt.
+- These are small numbers (5-54 readable events per attacker): "no measurable
+  change" is not proof of equal privacy. That is what the listening check is for.
+- Compared with the Step 17 default (16.4% of all dog sound muted), `more`
+  halves the dog sound lost (8.2%).
+- The kept dog is the extractor's output (16 kHz, about 1-4 dB quieter than
+  the original call, speech removed), not the untouched recording.
+- Mask power 3 (more conservative than 1) was chosen after power 1 had been
+  scored on the same events (power 1, router 2%: Parakeet 10.6% of words), so
+  the chosen setting is slightly optimistic.
+- The router's threshold is an average: per participant, `safe` lets through
+  0-15% of the person-only frames.
+- The two extractor folds differ: on held-out mixtures, the remaining speech
+  while someone talks is 20-22 dB below the dog in one fold, only 2-4 dB in the
+  other.
+
+**Not done yet: a person listening.** `outputs/listening_overlap/listen.html`
+has 12 real calls under speech (original / muted / dog kept, `more`). Until a
+person confirms that no words are understandable in "dog kept", `--keep-dog`
+is off by default.
+
+**Use it:**
+
+```bash
+python -m scripts.anonymize_recording input.wav out.wav --keep-dog safe
+```
+
+It needs `models/dog_router_v1.npz` and `models/dog_extractor/dog_extractor_w_all.pt`
+(trained on all participants, 5,000 steps) next to the v3 detector. The
+deployed extractor itself was not evaluated on unseen people (it has seen them
+all); the numbers above are from the two fold models. On stereo files the
+extractor works on the channel mix and its output goes to every channel.
+
+*Note on baselines:* Step 27's privacy numbers come from their own transcription
+run, so the "mute" row (0.9% / 4.4%) differs slightly from Step 26's table
+(1.0% / 5.2%) for the same setting; comparisons within each table use the same run.
+
+**Step 28: nothing muted - the dog comes back in all the muted time (`--keep-dog all`)**
+
+```bash
+# 28a-b: a router that also listens to the extractor's output (did not help)
+python -m scripts.extracted_features                               # extractor output -> Whisper + mn40 features (~20 min)
+python -m scripts.train_dog_router2 --inputs x+y
+# 28c: many more voices for the extractor (synthetic speech) and a clean-speech test set
+python -m scripts.download_models --tts                            # Piper / VITS voices (sherpa-onnx releases on GitHub)
+python -m scripts.make_tts_speech --n 1500                         # 1,500 utterances per speaker half (~25 min each)
+python -m scripts.train_dog_extractor_w --build --group odd --mix tts --n 3000
+python -m scripts.train_dog_extractor_w --build --group even --mix tts --n 3000
+python -m scripts.train_dog_extractor_w --build --group odd --mix clean --n 300     # test only: unseen clean voices
+python -m scripts.train_dog_extractor_w --build --group even --mix clean --n 300
+python -m scripts.train_dog_extractor_w --train-group odd --data ",_tts" --tag _tts --steps 6000
+python -m scripts.train_dog_extractor_w --train-group odd --data ",_tts" --tag _w2tts --arch w2 --steps 6000
+python -m scripts.eval_extractor_synthetic --data _clean --n 300 --tag _tts --powers 1 2 3 5
+python -m scripts.eval_extractor_real --tag _tts                   # real human-only and dog-only events
+# 28d-f: room tone under the processed time; four attackers
+python -m scripts.room_tone_levels                                 # how loud the dog calls are above the room tone
+E="--config barkw10_mute_c06 --kind w --mask-power 3 --room-tone 10 20 --adaptive-tone -6 -12 \
+   --router outputs/human_detector_whisper/oof_dog_router_wenc_eat_w5.npz --router-name routed1mic --route-share 0.05"
+python -m scripts.eval_dog_extraction $E --asr small parakeet        # Step 27's transcripts are reused (same folder)
+python -m scripts.eval_dog_extraction $E --asr turbo --only original mute mute_rt10 extract_rt10 extract_art-12 routed1mic0.05_hyb10
+python -m scripts.eval_dog_extraction $E --asr dfn+parakeet --only original mute routed1mic0.05 extract_rt10 extract_art-12 routed1mic0.05_hyb10
+python -m scripts.compare_leaks outputs/dog_extraction/barkw10_mute_c06_w_p3   # what each version lets through
+```
+
+**Where Step 27 stopped.** `--keep-dog safe` brings back a fifth of the muted
+dog sound; 9.8% of all dog sound is still muted. 62% of the muted dog time is
+not under a person at all: it is pure dog that the detector flagged (295 s),
+the rest is dog under a person (184 s). The router that decides "is there a
+dog?" is stuck at AUC 0.78-0.80, so the way forward is to make the extractor's
+output safe everywhere.
+
+**28a-b: a better router? No.** Describing the extractor's output with the
+same two networks and adding it to the router's input: AUC inside human frames
+0.80 (output only), 0.74-0.79 (combined, logistic regression or gradient
+boosting). No real gain.
+
+**28c: better extractors? Only along the same trade-off.**
+
+- *Synthetic voices.* The extractor had heard ~150 real voices per group. Text
+  to speech gives 780 more (Hungarian Piper voices, LibriTTS-R and VCTK
+  speakers, split into two halves by speaker so the test never hears a training
+  voice), saying dog-play phrases and LibriSpeech sentences at 0.8-1.3x speed,
+  placed in simulated lab rooms at the level of real lab voices.
+- *A clean test set.* The old held-out score (6-12 dB of speech removed) was
+  measured on real human events, which also carry the room's background; the
+  network keeps that background, as it should. On mixtures whose human part is
+  only unseen clean voices, the Step 27 extractor removes **14 dB** of the speech
+  (mask power 1) and **20 dB** (power 3, as deployed).
+- Results on those clean mixtures (speech removed / dog turned down, mask power 1 and 3; each group
+  processed by a model trained on the other group):
+
+| extractor | even participants | odd participants |
+|---|---|---|
+| Step 27 | 13.5 / 0.6 dB; 19.9 / 1.4 dB | 14.5 / 1.4 dB; 20.5 / 2.6 dB |
+| + synthetic voices | 14.7 / 0.4 dB; 20.8 / 1.0 dB | 14.6 / 0.8 dB; 20.7 / 1.5 dB |
+| + a loss on the leaked speech in dB (fine-tuned) | 21.9 / 2.3 dB; 26.4 / 3.7 dB | not trained |
+| frequency decoder (U-Net style) + synthetic voices | 14.7 / 0.2 dB; 19.0 / 0.4 dB | 14.4 / 0.9 dB; 19.0 / 1.2 dB |
+
+  The leak loss removes more speech only by turning the dog down more: at equal
+  dog loss it is no better than a higher mask power. The frequency decoder
+  keeps the dog better at the same speech removal on clean voices, but on the
+  real recordings it removes less of the person-only sound (4.1 dB instead of
+  5.6 dB, `real_events*.json`); it would need its own attack evaluation. Step
+  27's extractor stays.
+- The ceiling is far away: the target mask itself would remove 31 dB.
+
+**28d: why the extractor's leftovers are readable.** The attackers normalize
+the level before reading. What matters is not how much quieter the leftover
+voice is than the original, but how far it is above everything else in the
+output. In the lab the room tone is quiet: person-only speech is about 15 dB
+above it, the extractor's output during person-only sound only 4-6 dB, so the
+faint leftover is still the loudest thing there.
+
+**28e: room tone.** Inside the processed time, add steady noise with the
+spectrum of the recording's own room tone (the quietest 20% of the frames
+outside the processed time), a fixed number of dB above it
+(`vad_anonymization/comfort_noise.py`). Muted gaps then sound like the room
+instead of a dropout, and the leftover voice is under a noise floor.
+
+On the real sessions (detector `standard`, extractor of the other participant
+group, mask power 3), words of its own original transcript that each attacker
+reads back (`dfn+parakeet`: an adaptive attacker that first cleans the audio
+with DeepFilterNet3, a speech enhancer that removes steady noise):
+
+| inside the processed time | Whisper small | Parakeet | DeepFilterNet + Parakeet | Whisper turbo | events with real words beyond muting* |
+|---|---|---|---|---|---|
+| silence (`standard`) | 4.4% | 7.9% | 10.0% | 17.0% | - |
+| room tone +10 dB only | 4.4% | 10.0% | | 16.5% | 0 / 0 / - / 1 |
+| extractor everywhere | 5.8% | 16.9% | | | 2 / 1 / - / - |
+| extractor everywhere + room tone +10 dB | 4.4% | 11.3% | 15.6% | 17.6% | 0 / 0 / 0 / 4 |
+| extractor everywhere + room tone +20 dB | 4.4% | 10.0% | | | 0 / 0 / - / - |
+| extractor + room tone following the removed power (-12 dB) | 4.4% | 13.1% | 16.3% | 22.5% | 0 / 0 / 2 / 9 |
+| `--keep-dog more` (Step 27) | 4.4% | 10.4% | 10.3% | 18.0% | 0 / 0 / 0 / 4 |
+| **`--keep-dog all`**: extractor everywhere, room tone +10 dB where the router hears no dog | **4.4%** | 13.8% | 16.1% | 18.4% | **0 / 0 / 0** / 6 |
+
+\* per attacker (small / Parakeet / DeepFilterNet + Parakeet / turbo): human
+events where the attacker reads back more of its own words than from the muted
+version, not counting laughter, backchannels ("mm-hmm") and the recognizers'
+typical noise words ("you", "thank you"); `scripts/compare_leaks.py` lists them.
+
+- What the extra events contain, with room tone +10 dB and in `--keep-dog all`:
+  laughter and "mm-hmm" (the extractor lets laughter through) and "thank you";
+  no new words for Whisper small, Parakeet or the DeepFilterNet attacker. Room
+  tone alone already makes the recognizers write a few such things.
+- Whisper turbo writes English filler ("I'm going to go") for Hungarian speech;
+  its extra matches are such phrases and single words ("so", "happy",
+  "¿qué?"), plus the "Kiss me, kiss" that `--keep-dog more` already lets through.
+- In numbers (95% bootstrap intervals over participants, `leaks_vs_mute.json`),
+  `--keep-dog all` against muting: Parakeet +5.8 points (1.9 to 11.8),
+  DeepFilterNet + Parakeet +6.1 (1.1 to 10.7) - both above zero, and all of it
+  laughter, "mm-hmm" and "thank you"; turbo +1.4 (-0.4 to 3.3); Whisper small 0.
+  With 80-238 readable reference events per attacker, "no new words" is not
+  proof that nothing leaks.
+- The room tone level that follows the removed power keeps the dog more audible
+  (half of the calls 6 dB above the noise) but Whisper turbo reads clearly more
+  (+5.5 points, interval 2.4-9.0): not used.
+
+**28f: what comes back for the dog.** With `--keep-dog all` no dog time is
+muted any more (`standard`: 12.1% of all dog sound; `safe`: 9.8%; `more`:
+8.2%). The price is the noise floor. How loud the 432 annotated calls inside the
+processed time are compared with the added noise:
+
+| version | median call vs added noise | calls 6+ dB above it | calls with no noise at all |
+|---|---|---|---|
+| extractor everywhere + room tone +10 dB | -1.2 dB | 21% | 0% |
+| **`--keep-dog all`** | **+1.4 dB** | **34%** | **11%** |
+| extractor + room tone +20 dB | -11.2 dB | 3% | 0% |
+
+- Per call type with `--keep-dog all` (calls that get some room tone): pants
+  -0.4 dB under a person, -0.5 dB in detector false alarms (median, against
+  the added noise); other calls -2.8 dB and +1.8 dB.
+- Pants are quiet: a pant is 13 dB above the room tone (median); barks 61 dB,
+  growls 26 dB, grunts 28 dB, moans 39 dB (`room_tone_levels.json`). Loud calls
+  stay well above the room tone; pants under a person end up near it.
+- There is no frequency band where a quieter masker would spare the pants:
+  pants, person-only speech and the extractor's leftovers are spread evenly
+  over 0-8 kHz.
+- Compared with `--keep-dog more`, which brings back a third of the muted dog
+  time without noise, `--keep-dog all` brings back all of it, with a noise
+  floor where the router hears no dog. Which is more useful depends on the
+  analysis: for detecting calls and for loud calls, `all`; for the acoustics of
+  quiet pants, the pants that `more` keeps clean are kept clean by `all` too.
+
+**Use it:**
+
+```bash
+python -m scripts.anonymize_recording input.wav out.wav --keep-dog all             # room tone +10 dB (auto)
+python -m scripts.anonymize_recording input.wav out.wav --keep-dog all --room-tone 20
+python -m scripts.anonymize_recording input.wav out.wav --room-tone 10            # muting, with room tone in the gaps
+```
+
+Audio outside the processed time stays bit-identical in every mode (checked).
+The listening pack (`outputs/listening_overlap/listen.html`) now has a fourth
+version per clip (`d`: `--keep-dog all`). `--keep-dog` stays off by default
+until a person has listened.
 
 ## Testing
 

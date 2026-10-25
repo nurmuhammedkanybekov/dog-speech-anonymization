@@ -40,9 +40,11 @@ DETECTORS = {"vgg1": ("VGGish, one microphone (Step 9)", "#52514e"),
              "aug40": ("EfficientAT mn40, one mic, + ESC-50 dogs as negatives", "#2a78d6"),    # Step 20 (configs_v20.json)
              "aug2_40": ("EfficientAT mn40, one mic, + other dogs and speech under barks", "#eb6834"),  # Step 21 (configs_v21.json)
              "obj40": ("EfficientAT mn40, one mic, trained human vs dog", "#2a78d6"),  # Step 23 (configs_v23.json)
-             "wenc_eat_dog": ("Whisper encoder + EfficientAT mn40, human vs dog", "#d23c3c")}  # Step 25 (configs_v25.json)
+             "wenc_eat_dog": ("Whisper encoder + EfficientAT mn40, human vs dog", "#d23c3c"),  # Step 25 (configs_v25.json)
+             "barkw05": ("Step 25 + call-type weights (alpha 0.5)", "#8a8985"),   # Step 26 (configs_v26.json)
+             "barkw10": ("Step 25 + call-type weights (alpha 1)", "#8a8985")}
 COSTS_BY_DET = {"aug40": ["c06", "c10", "c15"], "aug2_40": ["c06", "c10", "c15"], "obj40": ["c06", "c10", "c15"],
-                "wenc_eat_dog": ["c03", "c06", "c10", "c15"]}
+                "wenc_eat_dog": ["c03", "c06", "c10", "c15"], "barkw05": ["c06", "c10"], "barkw10": ["c03", "c06", "c10", "c15"]}
 CURVE_DETS = [d for d in DETECTORS if d not in COSTS_BY_DET]
 PLOTTED = ["vgg1", "eat1", "eat40_1", "eat40_3"]
 INK, MUTED, GRID, SURFACE = "#0b0b0b", "#52514e", "#e4e3df", "#fcfcfb"

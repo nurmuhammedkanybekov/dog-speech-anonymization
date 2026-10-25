@@ -38,7 +38,7 @@ from vad_anonymization.elte_barks import load_sessions
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 OUT = Path(__file__).resolve().parent.parent / "outputs"
 GRID = 100  # 10 ms
-KEEP = ("vgg1", "eat40_1", "aug2_40", "obj40", "wenc_eat_dog", "wenc_eat_all", "fine_all", "fine_dog")
+KEEP = ("vgg1", "eat40_1", "aug2_40", "obj40", "wenc_eat_dog", "wenc_eat_all", "fine_all", "fine_dog", "barkw05", "barkw10")
 TYPES = ["Pant", "Growl", "Grunt", "Bark/yelp", "Whine", "Moan", "Other", "Sneeze", "Cough/woof", "Shake"]
 
 
@@ -46,7 +46,7 @@ def configs() -> dict[str, tuple[float, str]]:
     """name -> (threshold, prediction file), for the detectors compared in Steps 16-23."""
     cfg = {}
     for f in ("configs_v16.json", "configs_v17.json", "configs_v21.json", "configs_v23.json", "configs_v25.json",
-              "configs_v25_fine.json"):
+              "configs_v25_fine.json", "configs_v26.json"):
         if not (OUT / f).exists():
             continue
         for name, v in json.loads((OUT / f).read_text()).items():
